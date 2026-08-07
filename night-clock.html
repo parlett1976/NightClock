@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>Night Clock</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #000; touch-action: none;
+    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  }
+  #app {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: background-color 1s linear;
+  }
+  /* Fallback for the known iOS home-screen-app bug where the viewport doesn't
+     actually resize on physical rotation. When JS detects that mismatch, it
+     adds this class and rotates the content to match the real device orientation. */
+  body.force-rotate-cw #app,
+  body.force-rotate-ccw #app {
+    width: 100vh; height: 100vw;
+    top: 50%; left: 50%; right: auto; bottom: auto;
+    transform-origin: center center;
+  }
+  body.force-rotate-cw #app { transform: translate(-50%, -50%) rotate(90deg); }
+  body.force-rotate-ccw #app { transform: translate(-50%, -50%) rotate(-90deg); }
+  #clockWrap {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 100%; height: 100%;
+  }
+  #time {
+    font-weight: 800;
+    line-height: 0.95;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+    transition: color 1s linear;
+    font-variant-numeric: tabular-nums;
+    font-size: 40vmin;
+  }
+  #ampm {
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    transition: color 1s linear;
+    font-size: 6vmin;
+    margin-top: 0.5vmin;
+  }
+  #dimOverlay {
+    position: fixed; inset: 0; background: #000; pointer-events: none;
+    opacity: 0; z-index: 5; transition: opacity 0.05s linear;
+  }
+  #gear {
+    position: fixed; top: env(safe-area-inset-top, 12px); right: env(safe-area-inset-right, 12px);
+    width: 54px; height: 54px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(128,128,128,0.22); color: rgba(255,255,255,0.75);
+    font-size: 24px; z-index: 20; opacity: 0.35; transition: opacity 0.4s;
+  }
+  #gear.visible { opacity: 1; }
+  #panel {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(15,15,18,0.97); color: #eee;
+    display: none; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+    font-size: 16px; touch-action: pan-y;
+  }
+  #panel.open { display: block; }
+  #panel h2 { margin: 0 0 18px; font-size: 20px; font-weight: 700; }
+  .row { margin-bottom: 18px; }
+  .row label { display: block; font-size: 13px; color: #999; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .colorRow { display: flex; gap: 12px; }
+  .colorRow > div { flex: 1; }
+  input[type="color"] { width: 100%; height: 42px; border: none; border-radius: 8px; background: none; padding: 0; }
+  input[type="range"] { width: 100%; }
+  input[type="number"] { width: 90px; padding: 8px; border-radius: 6px; border: 1px solid #444; background: #222; color: #eee; font-size: 16px; }
+  select { padding: 8px; border-radius: 6px; border: 1px solid #444; background: #222; color: #eee; font-size: 16px; }
+  .switchRow { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2a2a2a; }
+  .switchRow label { margin: 0; font-size: 15px; color: #ddd; text-transform: none; letter-spacing: 0; }
+  .toggle { position: relative; width: 46px; height: 26px; }
+  .toggle input { opacity: 0; width: 100%; height: 100%; position: absolute; margin: 0; z-index: 2; }
+  .toggle .track { position: absolute; inset: 0; background: #444; border-radius: 13px; transition: background 0.2s; pointer-events: none; }
+  .toggle .thumb { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; background: #fff; border-radius: 50%; transition: left 0.2s; pointer-events: none; }
+  .toggle input:checked + .track { background: #34c759; }
+  .toggle input:checked + .track + .thumb { left: 22px; }
+  button.btn {
+    width: 100%; padding: 13px; border-radius: 10px; border: none; font-size: 15px; font-weight: 600;
+    margin-top: 8px; background: #2c2c2e; color: #fff;
+  }
+  button.btn.primary { background: #0a84ff; }
+  button.btn.danger { background: #3a1a1a; color: #ff6b6b; }
+  #closePanel {
+    position: absolute; top: max(24px, env(safe-area-inset-top)); right: 24px;
+    width: 34px; height: 34px; border-radius: 50%; background: #2c2c2e; color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 18px; border: none;
+  }
+  .section { margin-top: 26px; padding-top: 16px; border-top: 1px solid #2a2a2a; }
+  .hint { font-size: 12px; color: #777; margin-top: 4px; line-height: 1.4; }
+</style>
+</head>
+<body>
+
+<div id="dimOverlay"></div>
+<div id="gear">⚙</div>
+
+<div id="app">
+  <div id="clockWrap">
+    <div id="time">12:00</div>
+    <div id="ampm"></div>
+  </div>
+</div>
+
+<div id="panel">
+  <button id="closePanel">✕</button>
+  <h2>Night Clock Settings</h2>
+
+  <div class="row">
+    <label>Clock format</label>
+    <div class="switchRow">
+      <label for="fmt24">24-hour time</label>
+      <div class="toggle"><input type="checkbox" id="fmt24"><span class="track"></span><span class="thumb"></span></div>
+    </div>
+    <div class="switchRow">
+      <label for="showSec">Show seconds</label>
+      <div class="toggle"><input type="checkbox" id="showSec"><span class="track"></span><span class="thumb"></span></div>
+    </div>
+    <div class="switchRow">
+      <label for="flipRotation">Flip landscape direction</label>
+      <div class="toggle"><input type="checkbox" id="flipRotation"><span class="track"></span><span class="thumb"></span></div>
+    </div>
+    <div class="hint">This clock always displays in landscape - hold your phone sideways to read it. If it comes out upside-down, toggle this.</div>
+  </div>
+
+  <div class="section">
+    <div class="row">
+      <label>Background &amp; digit colors (starting state)</label>
+      <div class="colorRow">
+        <div><label>Background</label><input type="color" id="bgStart"></div>
+        <div><label>Digits</label><input type="color" id="digitStart"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="switchRow">
+      <label for="timerEnabled">Auto-dim / night-light timer</label>
+      <div class="toggle"><input type="checkbox" id="timerEnabled"><span class="track"></span><span class="thumb"></span></div>
+    </div>
+    <div class="hint">Gradually shifts background and digit colors from the starting colors above to the end colors below, over the duration you set. Great as a fall-asleep timer.</div>
+
+    <div class="row" style="margin-top:14px;">
+      <label>Duration (minutes)</label>
+      <input type="number" id="duration" min="1" max="480" value="20">
+    </div>
+
+    <div class="row">
+      <label>End colors (once timer finishes)</label>
+      <div class="colorRow">
+        <div><label>Background</label><input type="color" id="bgEnd"></div>
+        <div><label>Digits</label><input type="color" id="digitEnd"></div>
+      </div>
+    </div>
+
+    <button class="btn primary" id="restartTimer">Restart timer now</button>
+    <button class="btn" id="stopTimer">Stop timer / hold current colors</button>
+  </div>
+
+  <div class="section">
+    <label>Manual brightness (swipe up/down on the clock also controls this)</label>
+    <input type="range" id="manualDim" min="0" max="90" value="0">
+    <div class="hint">Swipe down slowly on the clock screen to dim, swipe up to brighten. Double-tap the clock to reset to full brightness.</div>
+  </div>
+
+  <div class="section">
+    <button class="btn" id="presetNightlight">Preset: Night-light (white → black, red digits → dim red)</button>
+    <button class="btn" id="presetClassic">Preset: Classic red digits (static, no timer)</button>
+    <button class="btn danger" id="resetAll">Reset all settings</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var KEY = 'nightClockSettings_v1';
+
+  function defaults(){
+    return {
+      bgStart: '#ffffff',
+      digitStart: '#e30000',
+      bgEnd: '#000000',
+      digitEnd: '#3a0000',
+      durationMin: 20,
+      timerEnabled: false,
+      timerStartTs: null,
+      format24: false,
+      showSeconds: false,
+      manualDim: 0,
+      flipRotation: false
+    };
+  }
+
+  var s = load();
+  function load(){
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (!raw) return defaults();
+      var parsed = JSON.parse(raw);
+      return Object.assign(defaults(), parsed);
+    } catch(e){ return defaults(); }
+  }
+  function save(){
+    try { localStorage.setItem(KEY, JSON.stringify(s)); } catch(e){}
+  }
+
+  // ---------- DOM refs ----------
+  var app = document.getElementById('app');
+  var timeEl = document.getElementById('time');
+  var ampmEl = document.getElementById('ampm');
+  var dimOverlay = document.getElementById('dimOverlay');
+  var gear = document.getElementById('gear');
+  var panel = document.getElementById('panel');
+
+  var fmt24 = document.getElementById('fmt24');
+  var showSec = document.getElementById('showSec');
+  var bgStart = document.getElementById('bgStart');
+  var digitStart = document.getElementById('digitStart');
+  var bgEnd = document.getElementById('bgEnd');
+  var digitEnd = document.getElementById('digitEnd');
+  var duration = document.getElementById('duration');
+  var timerEnabled = document.getElementById('timerEnabled');
+  var manualDimSlider = document.getElementById('manualDim');
+  var flipRotation = document.getElementById('flipRotation');
+
+  // ---------- color helpers ----------
+  function hexToRgb(hex){
+    hex = hex.replace('#','');
+    if (hex.length === 3) hex = hex.split('').map(function(c){return c+c;}).join('');
+    var n = parseInt(hex, 16);
+    return { r: (n>>16)&255, g: (n>>8)&255, b: n&255 };
+  }
+  function rgbToStr(rgb){ return 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')'; }
+  function lerp(a,b,t){ return a + (b-a)*t; }
+  function lerpColor(hexA, hexB, t){
+    var a = hexToRgb(hexA), b = hexToRgb(hexB);
+    return rgbToStr({
+      r: Math.round(lerp(a.r,b.r,t)),
+      g: Math.round(lerp(a.g,b.g,t)),
+      b: Math.round(lerp(a.b,b.b,t))
+    });
+  }
+
+  // ---------- populate UI from state ----------
+  function syncUIFromState(){
+    fmt24.checked = s.format24;
+    showSec.checked = s.showSeconds;
+    bgStart.value = s.bgStart;
+    digitStart.value = s.digitStart;
+    bgEnd.value = s.bgEnd;
+    digitEnd.value = s.digitEnd;
+    duration.value = s.durationMin;
+    timerEnabled.checked = s.timerEnabled;
+    manualDimSlider.value = s.manualDim;
+    flipRotation.checked = s.flipRotation;
+  }
+  syncUIFromState();
+
+  // ---------- clock ----------
+  function pad(n){ return n < 10 ? '0'+n : ''+n; }
+  function updateClock(){
+    var now = new Date();
+    var h = now.getHours();
+    var m = now.getMinutes();
+    var sec = now.getSeconds();
+    var ampmText = '';
+    if (!s.format24){
+      ampmText = h >= 12 ? 'PM' : 'AM';
+      h = h % 12; if (h === 0) h = 12;
+    }
+    var str = pad(h) + ':' + pad(m);
+    if (s.showSeconds) str += ':' + pad(sec);
+    timeEl.textContent = str;
+    ampmEl.textContent = ampmText;
+  }
+
+  // ---------- color / dim engine ----------
+  function currentFraction(){
+    if (!s.timerEnabled || !s.timerStartTs) return 0;
+    var elapsedMs = Date.now() - s.timerStartTs;
+    var totalMs = Math.max(1, s.durationMin) * 60000;
+    var f = elapsedMs / totalMs;
+    if (f < 0) f = 0;
+    if (f > 1) f = 1;
+    return f;
+  }
+
+  function applyColors(){
+    var f = currentFraction();
+    var bg = lerpColor(s.bgStart, s.bgEnd, f);
+    var fg = lerpColor(s.digitStart, s.digitEnd, f);
+    app.style.backgroundColor = bg;
+    timeEl.style.color = fg;
+    ampmEl.style.color = fg;
+    dimOverlay.style.opacity = (s.manualDim / 100);
+  }
+
+  // ---------- ticking ----------
+  function tick(){
+    updateClock();
+    applyColors();
+    fitClock();
+  }
+  setInterval(tick, s.showSeconds ? 1000 : 5000);
+  tick();
+
+  // ---------- font fit ----------
+  function availableSize(){
+    var rotated = document.body.classList.contains('force-rotate-cw') || document.body.classList.contains('force-rotate-ccw');
+    return rotated
+      ? { w: window.innerHeight, h: window.innerWidth }
+      : { w: window.innerWidth, h: window.innerHeight };
+  }
+  function fitClock(){
+    var maxVmin = 40;
+    timeEl.style.fontSize = maxVmin + 'vmin';
+    var tries = 0;
+    var size = availableSize();
+    while (tries < 30 && (timeEl.scrollWidth > size.w * 0.94 || timeEl.scrollHeight > size.h * 0.7)){
+      maxVmin -= 1.2;
+      timeEl.style.fontSize = maxVmin + 'vmin';
+      tries++;
+    }
+  }
+
+  // ---------- orientation: fixed landscape mode ----------
+  // Confirmed on-device: when this app is launched from the Home Screen,
+  // iOS freezes screen.orientation/window.orientation/innerWidth/innerHeight
+  // at the launch reading and never updates them again, even after physically
+  // rotating the phone. That's a known limitation of legacy "apple-mobile-
+  // web-app-capable" standalone apps (no manifest.json). Since there's no
+  // reliable signal to detect a live rotation, we always render rotated into
+  // landscape - hold the phone sideways to use the clock. Use "Flip landscape
+  // rotation" in settings if it comes out upside-down for you.
+  function syncOrientation(){
+    document.body.classList.remove('force-rotate-cw', 'force-rotate-ccw');
+    document.body.classList.add(s.flipRotation ? 'force-rotate-ccw' : 'force-rotate-cw');
+    fitClock();
+  }
+  window.addEventListener('resize', syncOrientation);
+  syncOrientation();
+
+  // ---------- settings panel ----------
+  var gearTimeout;
+  function showGear(){
+    gear.classList.add('visible');
+    clearTimeout(gearTimeout);
+    gearTimeout = setTimeout(function(){ gear.classList.remove('visible'); }, 3500);
+  }
+  showGear();
+
+  function openPanel(){ panel.classList.add('open'); }
+  function closePanel(){ panel.classList.remove('open'); persistFromUI(); }
+
+  // Bind both click AND a touch-tap fallback, since a single event type
+  // occasionally fails to register on iOS standalone home-screen apps.
+  function bindTap(el, handler){
+    if (!el) return;
+    el.addEventListener('click', handler);
+    var sx = 0, sy = 0, tracking = false;
+    el.addEventListener('touchstart', function(e){
+      tracking = true;
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    }, { passive: true });
+    el.addEventListener('touchend', function(e){
+      if (!tracking) return;
+      tracking = false;
+      var t = e.changedTouches[0];
+      if (Math.abs(t.clientX - sx) < 10 && Math.abs(t.clientY - sy) < 10){
+        e.preventDefault();
+        handler();
+      }
+    });
+  }
+
+  bindTap(gear, openPanel);
+  bindTap(document.getElementById('closePanel'), closePanel);
+
+  function persistFromUI(){
+    s.format24 = fmt24.checked;
+    s.showSeconds = showSec.checked;
+    s.bgStart = bgStart.value;
+    s.digitStart = digitStart.value;
+    s.bgEnd = bgEnd.value;
+    s.digitEnd = digitEnd.value;
+    s.durationMin = Math.max(1, parseInt(duration.value, 10) || 20);
+    var wasEnabled = s.timerEnabled;
+    s.timerEnabled = timerEnabled.checked;
+    if (s.timerEnabled && !wasEnabled){
+      s.timerStartTs = Date.now();
+    }
+    if (!s.timerEnabled){
+      s.timerStartTs = null;
+    }
+    s.manualDim = parseInt(manualDimSlider.value, 10) || 0;
+    s.flipRotation = flipRotation.checked;
+    save();
+    tick();
+    syncOrientation();
+  }
+
+  [fmt24, showSec, bgStart, digitStart, bgEnd, digitEnd, duration, timerEnabled, flipRotation].forEach(function(el){
+    el.addEventListener('change', persistFromUI);
+    el.addEventListener('input', persistFromUI);
+  });
+  manualDimSlider.addEventListener('input', function(){
+    s.manualDim = parseInt(manualDimSlider.value, 10) || 0;
+    dimOverlay.style.opacity = s.manualDim / 100;
+    save();
+  });
+
+  bindTap(document.getElementById('restartTimer'), function(){
+    s.timerEnabled = true;
+    s.timerStartTs = Date.now();
+    timerEnabled.checked = true;
+    save();
+    tick();
+  });
+  bindTap(document.getElementById('stopTimer'), function(){
+    s.timerEnabled = false;
+    s.timerStartTs = null;
+    timerEnabled.checked = false;
+    save();
+    tick();
+  });
+
+  bindTap(document.getElementById('presetNightlight'), function(){
+    s.bgStart = '#ffffff'; s.digitStart = '#e30000';
+    s.bgEnd = '#000000'; s.digitEnd = '#3a0000';
+    s.durationMin = 20;
+    s.timerEnabled = true; s.timerStartTs = Date.now();
+    save(); syncUIFromState(); tick();
+  });
+  bindTap(document.getElementById('presetClassic'), function(){
+    s.bgStart = '#000000'; s.digitStart = '#ff2b2b';
+    s.bgEnd = '#000000'; s.digitEnd = '#ff2b2b';
+    s.timerEnabled = false; s.timerStartTs = null;
+    save(); syncUIFromState(); tick();
+  });
+  bindTap(document.getElementById('resetAll'), function(){
+    s = defaults();
+    save(); syncUIFromState(); tick();
+  });
+
+  // ---------- swipe to dim / brighten ----------
+  var touchStartY = null;
+  var startDim = 0;
+  var SWIPE_RANGE_PX = 320; // slow, deliberate swipe spans this many px for full 0-90 range
+
+  document.addEventListener('touchstart', function(e){
+    if (panel.classList.contains('open')) return;
+    if (e.touches.length !== 1) return;
+    touchStartY = e.touches[0].clientY;
+    startDim = s.manualDim;
+    showGear();
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function(e){
+    if (panel.classList.contains('open') || touchStartY === null) return;
+    var dy = e.touches[0].clientY - touchStartY; // positive = swiped down
+    var delta = (dy / SWIPE_RANGE_PX) * 90;
+    var newDim = startDim + delta;
+    if (newDim < 0) newDim = 0;
+    if (newDim > 90) newDim = 90;
+    s.manualDim = Math.round(newDim);
+    dimOverlay.style.opacity = s.manualDim / 100;
+    manualDimSlider.value = s.manualDim;
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(){
+    if (touchStartY === null) return;
+    touchStartY = null;
+    save();
+  });
+
+  // double-tap clock to reset brightness to full
+  var lastTap = 0;
+  document.addEventListener('touchend', function(e){
+    var now = Date.now();
+    if (now - lastTap < 300){
+      s.manualDim = 0;
+      dimOverlay.style.opacity = 0;
+      manualDimSlider.value = 0;
+      save();
+    }
+    lastTap = now;
+  });
+
+  document.addEventListener('touchstart', function(){ showGear(); }, { passive: true });
+
+  // ---------- keep screen awake ----------
+  var wakeLock = null;
+  function requestWakeLock(){
+    if ('wakeLock' in navigator){
+      navigator.wakeLock.request('screen').then(function(lock){
+        wakeLock = lock;
+      }).catch(function(){ /* ignore - not fatal */ });
+    }
+  }
+  requestWakeLock();
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') requestWakeLock();
+  });
+
+  // keep the interpolation animating smoothly while timer active
+  setInterval(function(){
+    if (s.timerEnabled) applyColors();
+  }, 2000);
+
+})();
+</script>
+</body>
+</html>
