@@ -204,6 +204,10 @@
           </div>
 
           <button id="done-btn">Done</button>
+
+          <div id="version-row" style="margin-top:14px; text-align:center; font-size:13px; color:#a55; opacity:0.8;">
+            Version <span id="version-value">—</span>
+          </div>
         </div>
       </div>
     </div>
@@ -273,6 +277,7 @@
   const settingsSheet = document.getElementById('settings-sheet');
   const doneBtn = document.getElementById('done-btn');
   const keepAwakeVideo = document.getElementById('keep-awake-video');
+  const versionValueEl = document.getElementById('version-value');
 
   const optHour12 = document.getElementById('opt-hour12');
   const optSeconds = document.getElementById('opt-seconds');
@@ -528,7 +533,7 @@
   // JP's phone will either never notice the update or will reload in a
   // loop, so keep them identical on every deploy.
   // ---------------------------------------------------------------------
-  const APP_VERSION = "2026-08-28.3"; // MUST match version.json's "version" field
+  const APP_VERSION = "2026-08-28.4"; // MUST match version.json's "version" field
 
   async function checkForUpdate() {
     if (settingsOpen || nightlight.state === 'active') return;
@@ -566,6 +571,10 @@
     optColon.checked = !!settings.removeColon;
     optNightlightMinutes.value = String(settings.nightlightMinutes);
     optFlip.checked = settings.flipDirection === 'ccw';
+    // Shown at the bottom of the settings sheet so JP can confirm on the
+    // phone itself whether a GitHub deploy actually reached the home-screen
+    // icon (compare against the version number quoted when a fix is made).
+    if (versionValueEl) versionValueEl.textContent = APP_VERSION;
   }
 
   function openSettings() {
