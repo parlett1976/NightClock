@@ -209,6 +209,11 @@
             Version <span id="version-value">—</span><br>
             Wake Lock: <span id="wakelock-status">—</span>
           </div>
+
+          <div id="diag-row" style="margin-top:10px; text-align:left; font-size:11px; color:#a55; opacity:0.7; max-height:120px; overflow-y:auto; border-top:1px solid #300; padding-top:8px;">
+            <div style="text-align:center; margin-bottom:4px;">Recent activity (newest first)</div>
+            <div id="diag-log">(none yet)</div>
+          </div>
         </div>
       </div>
     </div>
@@ -280,6 +285,7 @@
   const keepAwakeVideo = document.getElementById('keep-awake-video');
   const versionValueEl = document.getElementById('version-value');
   const wakeLockStatusEl = document.getElementById('wakelock-status');
+  const diagLogEl = document.getElementById('diag-log');
 
   const optHour12 = document.getElementById('opt-hour12');
   const optSeconds = document.getElementById('opt-seconds');
@@ -290,6 +296,53 @@
 
   let settingsOpen = false;
   let manualDim = 0; // not persisted — resets to 0 on fresh load
+
+  // ---------------------------------------------------------------------
+  // Overnight diagnostic log
+  //
+  // ADDED 2026-08-28: JP confirmed Wake Lock showed "active" at a single
+  // point-in-time check, on iOS 26.5 with Low Power Mode off — yet the
+  // screen still went dark overnight. That single live check can't tell
+  // us whether the wake lock survived the whole night or was silently
+  // dropped hours later (a known possibility per WebKit/NoSleep.js
+  // reports). This logs every wake-lock and screen-visibility transition
+  // to localStorage (survives reloads, including the app's own
+  // auto-update reload) with a timestamp, so the Settings sheet can show
+  // a real overnight timeline instead of one instantaneous snapshot.
+  // ---------------------------------------------------------------------
+  const DIAG_KEY = 'nightclock.diag.v1';
+  const DIAG_LABELS = {
+    load: 'Page (re)loaded',
+    visible: 'Screen woke / app visible',
+    hidden: 'Screen went dark / app hidden',
+    'wakelock-acquired': 'Wake Lock acquired',
+    'wakelock-released': 'Wake Lock released',
+    'wakelock-error': 'Wake Lock request failed'
+  };
+
+  function logDiag(event) {
+    try {
+      const raw = localStorage.getItem(DIAG_KEY);
+      let arr = raw ? JSON.parse(raw) : [];
+      arr.push({ t: Date.now(), e: event });
+      if (arr.length > 40) arr = arr.slice(arr.length - 40); // rolling window
+      localStorage.setItem(DIAG_KEY, JSON.stringify(arr));
+    } catch (err) { /* storage unavailable — diagnostics just won't persist */ }
+  }
+
+  function renderDiagLog() {
+    if (!diagLogEl) return;
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem(DIAG_KEY) || '[]'); }
+    catch (err) { arr = []; }
+    if (!arr.length) { diagLogEl.textContent = '(none yet)'; return; }
+    const recent = arr.slice(-12).reverse();
+    diagLogEl.innerHTML = recent.map(function (entry) {
+      const time = new Date(entry.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const label = DIAG_LABELS[entry.e] || entry.e;
+      return time + ' — ' + label;
+    }).join('<br>');
+  }
 
   // ---------------------------------------------------------------------
   // Rotation
@@ -519,16 +572,19 @@
       wakeLock = await navigator.wakeLock.request('screen');
       wakeLockActive = true;
       updateWakeLockStatus();
+      logDiag('wakelock-acquired');
       wakeLock.addEventListener('release', function () {
         wakeLock = null;
         wakeLockActive = false;
         updateWakeLockStatus();
+        logDiag('wakelock-released');
       });
     } catch (e) {
       // e.g. not supported, page not visible, or (per the WebKit bug above)
       // silently rejected in standalone mode on pre-18.4 iOS.
       wakeLockActive = false;
       updateWakeLockStatus();
+      logDiag('wakelock-error');
     }
   }
 
@@ -574,7 +630,7 @@
   // JP's phone will either never notice the update or will reload in a
   // loop, so keep them identical on every deploy.
   // ---------------------------------------------------------------------
-  const APP_VERSION = "2026-08-28.5"; // MUST match version.json's "version" field
+  const APP_VERSION = "2026-08-28.6"; // MUST match version.json's "version" field
 
   async function checkForUpdate() {
     if (settingsOpen || nightlight.state === 'active') return;
@@ -617,6 +673,7 @@
     // icon (compare against the version number quoted when a fix is made).
     if (versionValueEl) versionValueEl.textContent = APP_VERSION;
     updateWakeLockStatus();
+    renderDiagLog();
   }
 
   function openSettings() {
@@ -689,6 +746,7 @@
   // ---------------------------------------------------------------------
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') {
+      logDiag('visible');
       acquireWakeLock();
       nudgeKeepAwakeVideo();
       updateOrientation();
@@ -698,6 +756,12 @@
         if (p >= 1) cancelNightlight();
         else requestAnimationFrame((function (gen) { return function () { nightlightFrame(gen); }; })(nightlight.gen));
       }
+    } else {
+      // The page going hidden is itself the most direct signal available
+      // to JS of "the screen just went dark" (locking, or backgrounding),
+      // so this is the timestamp to compare against when the phone was
+      // actually found locked.
+      logDiag('hidden');
     }
   });
 
@@ -710,6 +774,7 @@
   // 3.9 Init
   // ---------------------------------------------------------------------
   document.addEventListener('DOMContentLoaded', function () {
+    logDiag('load');
     loadSettings();
     updateOrientation();
     reflectSettingsToUI();
