@@ -126,6 +126,18 @@
 </style>
 </head>
 <body>
+  <!-- Hidden 1x1 silent looping video: an iOS-proven trick to keep the
+       screen from auto-locking. The Screen Wake Lock API below is tried
+       first, but its support/reliability on iOS varies by version and is
+       known to be inconsistent specifically for "Add to Home Screen"
+       standalone apps, so this silent video runs as a backup — iOS treats
+       an actively-playing video (even muted/invisible) as a reason to
+       suppress its auto-lock timer. Same technique used by NoSleep.js.
+       Inaudible, invisible, and outside #rotator so it's unaffected by
+       the rotation transform. -->
+  <video id="keep-awake-video" muted playsinline webkit-playsinline loop preload="auto" style="position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;pointer-events:none;">
+    <source src="data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMxbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAC7gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlt0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAC7gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAIAAAACAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAu4AAAAAAABAAAAAAHTbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAwABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABfm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAT5zdGJsAAAAunN0c2QAAAAAAAAAAQAAAKphdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAIAAgBIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAAMGF2Y0MBQsAe/+EAGGdCwB7ZH4iIwEQAAAMABAAAAwAIPFi5IAEABWjLg8sgAAAAEHBhc3AAAAABAAAAAQAAABRidHJ0AAAAAAAABvAAAAbwAAAAGHN0dHMAAAAAAAAAAQAAAAMAAEAAAAAAFHN0c3MAAAAAAAAAAQAAAAEAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAMAAAABAAAAIHN0c3oAAAAAAAAAAAAAAAMAAAKGAAAACgAAAAoAAAAUc3RjbwAAAAAAAAABAAADYQAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNjAuMTYuMTAwAAAACGZyZWUAAAKibWRhdAAAAnAGBf//bNxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNjQgcjMxMDggMzFlMTlmOSAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMjMgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0wIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDE6MHgxMTEgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTAgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MCB3ZWlnaHRwPTAga2V5aW50PTI1MCBrZXlpbnRfbWluPTEgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAAOZYiEBf///w9FAAFXn4AAAAAGQZo4C3qAAAAABkGaVAK+oA==" type="video/mp4">
+  </video>
   <div id="rotator">
     <div id="stage">
       <div id="clock-wrap"><span id="digits"></span></div>
@@ -260,6 +272,7 @@
   const gearBtn = document.getElementById('gear-btn');
   const settingsSheet = document.getElementById('settings-sheet');
   const doneBtn = document.getElementById('done-btn');
+  const keepAwakeVideo = document.getElementById('keep-awake-video');
 
   const optHour12 = document.getElementById('opt-hour12');
   const optSeconds = document.getElementById('opt-seconds');
@@ -454,9 +467,12 @@
   stage.addEventListener('touchend', function () { dimState = null; }, { passive: true });
   stage.addEventListener('touchcancel', function () { dimState = null; }, { passive: true });
 
-  // Classic iOS Safari fix: a no-op document-level touchstart listener
-  // enables the :active CSS pseudo-class on tapped elements (buttons).
-  document.addEventListener('touchstart', function () {}, { passive: true });
+  // Classic iOS Safari fix: a document-level touchstart listener enables
+  // the :active CSS pseudo-class on tapped elements (buttons). It also
+  // doubles as a nudge to resume the keep-awake video, since any touch
+  // interaction is a safe, reliable point to re-request it if iOS paused
+  // it for any reason.
+  document.addEventListener('touchstart', function () { nudgeKeepAwakeVideo(); }, { passive: true });
 
   // ---------------------------------------------------------------------
   // 3.7 Wake Lock
@@ -471,6 +487,38 @@
   }
 
   // ---------------------------------------------------------------------
+  // Keep-awake fallback (silent looping video)
+  //
+  // BUG FIX (reported on real device): the phone was still auto-locking
+  // and sleeping even with the Wake Lock request above. Wake Lock support
+  // and reliability on iOS varies by version and is known to be
+  // inconsistent specifically in "Add to Home Screen" standalone mode —
+  // when it's unsupported or silently ignored there's no signal we can
+  // detect, and nothing else was stopping the OS's normal auto-lock timer.
+  //
+  // Fix: also keep a silent, invisible, looping <video> playing in the
+  // background. iOS treats an actively-playing video (even muted and
+  // invisible) as a reason to suppress the screen's auto-lock timer —
+  // a long-standing technique (used by libraries like NoSleep.js) that
+  // works across far more iOS versions/modes than Wake Lock alone. It's
+  // re-nudged with .play() on load, whenever the app returns to the
+  // foreground, and on every touch, since iOS can pause background video
+  // and needs a nudge to resume it.
+  // ---------------------------------------------------------------------
+  function nudgeKeepAwakeVideo() {
+    if (!keepAwakeVideo) return;
+    var p = keepAwakeVideo.play();
+    if (p && typeof p.catch === 'function') p.catch(function () { /* ignore — retried on next nudge */ });
+  }
+  if (keepAwakeVideo) {
+    keepAwakeVideo.addEventListener('pause', function () {
+      // iOS occasionally pauses background video on its own; resume it
+      // immediately if the app is still the visible, active tab.
+      if (document.visibilityState === 'visible') nudgeKeepAwakeVideo();
+    });
+  }
+
+  // ---------------------------------------------------------------------
   // 3.8 Version check / forced reload
   //
   // IMPORTANT: whoever edits this file for a new deploy MUST bump BOTH
@@ -480,7 +528,7 @@
   // JP's phone will either never notice the update or will reload in a
   // loop, so keep them identical on every deploy.
   // ---------------------------------------------------------------------
-  const APP_VERSION = "2026-08-28.2"; // MUST match version.json's "version" field
+  const APP_VERSION = "2026-08-28.3"; // MUST match version.json's "version" field
 
   async function checkForUpdate() {
     if (settingsOpen || nightlight.state === 'active') return;
@@ -591,6 +639,7 @@
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') {
       acquireWakeLock();
+      nudgeKeepAwakeVideo();
       updateOrientation();
       checkForUpdate();
       if (nightlight.state === 'active') {
@@ -602,6 +651,7 @@
   });
 
   window.addEventListener('load', acquireWakeLock);
+  window.addEventListener('load', nudgeKeepAwakeVideo);
   window.addEventListener('load', function () { setTimeout(checkForUpdate, 2000); });
   setInterval(checkForUpdate, 5 * 60 * 1000);
 
@@ -619,6 +669,7 @@
     });
     setInterval(tick, 200);
     acquireWakeLock();
+    nudgeKeepAwakeVideo();
   });
 })();
 </script>
