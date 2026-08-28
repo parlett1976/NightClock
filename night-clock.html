@@ -4,522 +4,555 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Night Clock">
 <title>Night Clock</title>
 <style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
   html, body {
-    margin: 0; padding: 0; width: 100%; height: 100%;
-    overflow: hidden; background: #000; touch-action: none;
-    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    margin: 0; padding: 0; background: #000; overflow: hidden;
+    height: 100%; width: 100%; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
   }
-  #app {
-    position: fixed; inset: 0;
-    display: flex; align-items: center; justify-content: center;
-    transition: background-color 1s linear;
-  }
-  /* Fallback for the known iOS home-screen-app bug where the viewport doesn't
-     actually resize on physical rotation. When JS detects that mismatch, it
-     adds this class and rotates the content to match the real device orientation. */
-  body.force-rotate-cw #app,
-  body.force-rotate-ccw #app {
-    width: 100vh; height: 100vw;
-    top: 50%; left: 50%; right: auto; bottom: auto;
+
+  #rotator {
+    position: fixed; top: 50%; left: 50%;
+    width: 100vh; height: 100vw; /* swapped dims for landscape pre-rotation */
     transform-origin: center center;
+    transform: translate(-50%, -50%) rotate(90deg);
+    background: #000;
   }
-  body.force-rotate-cw #app { transform: translate(-50%, -50%) rotate(90deg); }
-  body.force-rotate-ccw #app { transform: translate(-50%, -50%) rotate(-90deg); }
-  #clockWrap {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    width: 100%; height: 100%;
+  #stage {
+    width: 100%; height: 100%; position: relative;
   }
-  #time {
-    font-weight: 800;
-    line-height: 0.95;
-    letter-spacing: -0.02em;
-    white-space: nowrap;
-    transition: color 1s linear;
-    font-variant-numeric: tabular-nums;
-    font-size: 40vmin;
-  }
-  #ampm {
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    transition: color 1s linear;
-    font-size: 6vmin;
-    margin-top: 0.5vmin;
-  }
-  #dimOverlay {
-    position: fixed; inset: 0; background: #000; pointer-events: none;
-    opacity: 0; z-index: 5; transition: opacity 0.05s linear;
-  }
-  #gear {
-    position: fixed; top: env(safe-area-inset-top, 12px); right: env(safe-area-inset-right, 12px);
-    width: 54px; height: 54px; border-radius: 50%;
+
+  #clock-wrap {
+    position: absolute; inset: max(24px, 3vmin);
     display: flex; align-items: center; justify-content: center;
-    background: rgba(128,128,128,0.22); color: rgba(255,255,255,0.75);
-    font-size: 24px; z-index: 20; opacity: 0.35; transition: opacity 0.4s;
+    overflow: hidden;
   }
-  #gear.visible { opacity: 1; }
-  #panel {
-    position: fixed; inset: 0; z-index: 50;
-    background: rgba(15,15,18,0.97); color: #eee;
-    display: none; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
-    font-size: 16px; touch-action: pan-y;
+  #digits {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    line-height: 1;
+    color: #f00;
+    white-space: nowrap;
   }
-  #panel.open { display: block; }
-  #panel h2 { margin: 0 0 18px; font-size: 20px; font-weight: 700; }
-  .row { margin-bottom: 18px; }
-  .row label { display: block; font-size: 13px; color: #999; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
-  .colorRow { display: flex; gap: 12px; }
-  .colorRow > div { flex: 1; }
-  input[type="color"] { width: 100%; height: 42px; border: none; border-radius: 8px; background: none; padding: 0; }
-  input[type="range"] { width: 100%; }
-  input[type="number"] { width: 90px; padding: 8px; border-radius: 6px; border: 1px solid #444; background: #222; color: #eee; font-size: 16px; }
-  select { padding: 8px; border-radius: 6px; border: 1px solid #444; background: #222; color: #eee; font-size: 16px; }
-  .switchRow { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #2a2a2a; }
-  .switchRow label { margin: 0; font-size: 15px; color: #ddd; text-transform: none; letter-spacing: 0; }
-  .toggle { position: relative; width: 46px; height: 26px; }
-  .toggle input { opacity: 0; width: 100%; height: 100%; position: absolute; margin: 0; z-index: 2; }
-  .toggle .track { position: absolute; inset: 0; background: #444; border-radius: 13px; transition: background 0.2s; pointer-events: none; }
-  .toggle .thumb { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; background: #fff; border-radius: 50%; transition: left 0.2s; pointer-events: none; }
-  .toggle input:checked + .track { background: #34c759; }
-  .toggle input:checked + .track + .thumb { left: 22px; }
-  button.btn {
-    width: 100%; padding: 13px; border-radius: 10px; border: none; font-size: 15px; font-weight: 600;
-    margin-top: 8px; background: #2c2c2e; color: #fff;
+
+  #nightlight-overlay {
+    position: absolute; inset: 0; background: #fff;
+    opacity: 0; z-index: 10; pointer-events: none;
   }
-  button.btn.primary { background: #0a84ff; }
-  button.btn.danger { background: #3a1a1a; color: #ff6b6b; }
-  #closePanel {
-    position: absolute; top: max(24px, env(safe-area-inset-top)); right: 24px;
-    width: 34px; height: 34px; border-radius: 50%; background: #2c2c2e; color: #fff;
-    display: flex; align-items: center; justify-content: center; font-size: 18px; border: none;
+  #dim-overlay {
+    position: absolute; inset: 0; background: #000;
+    opacity: 0; z-index: 20; pointer-events: none;
   }
-  .section { margin-top: 26px; padding-top: 16px; border-top: 1px solid #2a2a2a; }
-  .hint { font-size: 12px; color: #777; margin-top: 4px; line-height: 1.4; }
+
+  #nightlight-btn, #gear-btn {
+    position: absolute; z-index: 30;
+    min-width: 44px; min-height: 44px;
+    width: 56px; height: 56px;
+    border: none; border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    color: #f00;
+    font-size: 26px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0.35;
+    -webkit-tap-highlight-color: transparent;
+    padding: 0;
+  }
+  #nightlight-btn:active, #gear-btn:active,
+  #nightlight-btn:focus, #gear-btn:focus {
+    opacity: 1;
+  }
+  #nightlight-btn { bottom: 10px; left: 10px; }
+  #gear-btn { top: 10px; right: 10px; }
+
+  #settings-sheet {
+    position: absolute; inset: 0; z-index: 40;
+    background: rgba(0,0,0,0.92);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #settings-sheet[hidden] { display: none; }
+  #settings-panel {
+    background: #111; border: 1px solid #400;
+    border-radius: 12px; padding: 20px 24px;
+    width: min(86%, 520px); max-height: 90%; overflow-y: auto;
+    color: #f00; font-family: -apple-system, system-ui, sans-serif;
+  }
+  #settings-panel h2 {
+    margin: 0 0 8px; font-size: 20px; color: #f00;
+  }
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 4px; border-bottom: 1px solid #300;
+    font-size: 17px;
+  }
+  .toggle-row label.text { flex: 1; padding-right: 12px; color: #f00; }
+  .toggle { position: relative; width: 74px; height: 44px; flex: 0 0 auto; }
+  .toggle input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 74px; height: 44px; margin: 0;
+    background: #442222; border-radius: 22px;
+    position: relative; cursor: pointer; outline: none;
+    display: block;
+  }
+  .toggle input[type="checkbox"]:checked { background: #a00000; }
+  .toggle .thumb {
+    position: absolute; top: 4px; left: 4px;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: #fff; pointer-events: none;
+    transition: transform 0.15s ease;
+  }
+  .toggle input[type="checkbox"]:checked ~ .thumb {
+    transform: translateX(30px);
+  }
+  .select-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 4px; border-bottom: 1px solid #300; font-size: 17px;
+  }
+  .select-row select {
+    background: #221010; color: #f00; border: 1px solid #500;
+    border-radius: 6px; font-size: 16px; padding: 6px 8px;
+  }
+  #done-btn {
+    margin-top: 18px; width: 100%; min-height: 48px;
+    background: #a00000; color: #fff; border: none; border-radius: 8px;
+    font-size: 18px; font-weight: 700;
+  }
 </style>
 </head>
 <body>
+  <div id="rotator">
+    <div id="stage">
+      <div id="clock-wrap"><span id="digits"></span></div>
+      <div id="nightlight-overlay"></div>
+      <div id="dim-overlay"></div>
+      <button id="nightlight-btn" aria-label="Nightlight">&#9789;</button>
+      <button id="gear-btn" aria-label="Settings">&#9881;</button>
 
-<div id="dimOverlay"></div>
-<div id="gear">⚙</div>
+      <div id="settings-sheet" hidden>
+        <div id="settings-panel">
+          <h2>Settings</h2>
 
-<div id="app">
-  <div id="clockWrap">
-    <div id="time">12:00</div>
-    <div id="ampm"></div>
-  </div>
-</div>
+          <div class="toggle-row">
+            <label class="text" for="opt-hour12">12-hour clock</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-hour12">
+              <span class="thumb"></span>
+            </span>
+          </div>
 
-<div id="panel">
-  <button id="closePanel">✕</button>
-  <h2>Night Clock Settings</h2>
+          <div class="toggle-row">
+            <label class="text" for="opt-seconds">Show seconds</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-seconds">
+              <span class="thumb"></span>
+            </span>
+          </div>
 
-  <div class="row">
-    <label>Clock format</label>
-    <div class="switchRow">
-      <label for="fmt24">24-hour time</label>
-      <div class="toggle"><input type="checkbox" id="fmt24"><span class="track"></span><span class="thumb"></span></div>
-    </div>
-    <div class="switchRow">
-      <label for="showSec">Show seconds</label>
-      <div class="toggle"><input type="checkbox" id="showSec"><span class="track"></span><span class="thumb"></span></div>
-    </div>
-    <div class="switchRow">
-      <label for="flipRotation">Flip landscape direction</label>
-      <div class="toggle"><input type="checkbox" id="flipRotation"><span class="track"></span><span class="thumb"></span></div>
-    </div>
-    <div class="hint">This clock always displays in landscape - hold your phone sideways to read it. If it comes out upside-down, toggle this.</div>
-  </div>
+          <div class="toggle-row">
+            <label class="text" for="opt-lead-zero">Remove leading zero</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-lead-zero">
+              <span class="thumb"></span>
+            </span>
+          </div>
 
-  <div class="section">
-    <div class="row">
-      <label>Background &amp; digit colors (starting state)</label>
-      <div class="colorRow">
-        <div><label>Background</label><input type="color" id="bgStart"></div>
-        <div><label>Digits</label><input type="color" id="digitStart"></div>
+          <div class="toggle-row">
+            <label class="text" for="opt-colon">Remove colon</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-colon">
+              <span class="thumb"></span>
+            </span>
+          </div>
+
+          <div class="select-row">
+            <label for="opt-nightlight-minutes">Nightlight duration</label>
+            <select id="opt-nightlight-minutes">
+              <option value="1">1 min</option>
+              <option value="5">5 min</option>
+              <option value="10">10 min</option>
+              <option value="15">15 min</option>
+              <option value="20">20 min</option>
+              <option value="30">30 min</option>
+              <option value="60">60 min</option>
+            </select>
+          </div>
+
+          <div class="toggle-row">
+            <label class="text" for="opt-flip">Flip landscape direction</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-flip">
+              <span class="thumb"></span>
+            </span>
+          </div>
+
+          <button id="done-btn">Done</button>
+        </div>
       </div>
     </div>
   </div>
-
-  <div class="section">
-    <div class="switchRow">
-      <label for="timerEnabled">Auto-dim / night-light timer</label>
-      <div class="toggle"><input type="checkbox" id="timerEnabled"><span class="track"></span><span class="thumb"></span></div>
-    </div>
-    <div class="hint">Gradually shifts background and digit colors from the starting colors above to the end colors below, over the duration you set. Great as a fall-asleep timer.</div>
-
-    <div class="row" style="margin-top:14px;">
-      <label>Duration (minutes)</label>
-      <input type="number" id="duration" min="1" max="480" value="20">
-    </div>
-
-    <div class="row">
-      <label>End colors (once timer finishes)</label>
-      <div class="colorRow">
-        <div><label>Background</label><input type="color" id="bgEnd"></div>
-        <div><label>Digits</label><input type="color" id="digitEnd"></div>
-      </div>
-    </div>
-
-    <button class="btn primary" id="restartTimer">Restart timer now</button>
-    <button class="btn" id="stopTimer">Stop timer / hold current colors</button>
-  </div>
-
-  <div class="section">
-    <label>Manual brightness (swipe up/down on the clock also controls this)</label>
-    <input type="range" id="manualDim" min="0" max="90" value="0">
-    <div class="hint">Swipe down slowly on the clock screen to dim, swipe up to brighten. Double-tap the clock to reset to full brightness.</div>
-  </div>
-
-  <div class="section">
-    <button class="btn" id="presetNightlight">Preset: Night-light (white → black, red digits → dim red)</button>
-    <button class="btn" id="presetClassic">Preset: Classic red digits (static, no timer)</button>
-    <button class="btn danger" id="resetAll">Reset all settings</button>
-  </div>
-</div>
 
 <script>
-(function(){
-  var KEY = 'nightClockSettings_v1';
+(function () {
+  'use strict';
 
-  function defaults(){
-    return {
-      bgStart: '#ffffff',
-      digitStart: '#e30000',
-      bgEnd: '#000000',
-      digitEnd: '#3a0000',
-      durationMin: 20,
-      timerEnabled: false,
-      timerStartTs: null,
-      format24: false,
-      showSeconds: false,
-      manualDim: 0,
-      flipRotation: false
-    };
+  // ---------------------------------------------------------------------
+  // 3.1 Settings
+  // ---------------------------------------------------------------------
+  const DEFAULT_SETTINGS = {
+    hour12: true,
+    showSeconds: false,
+    removeLeadingZero: false,
+    removeColon: false,
+    nightlightMinutes: 15,
+    flipDirection: 'cw' // 'cw' -> rotate(90deg), 'ccw' -> rotate(-90deg)
+  };
+  const SETTINGS_KEY = 'nightclock.settings.v1';
+  let settings = Object.assign({}, DEFAULT_SETTINGS);
+
+  function loadSettings() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); }
+    catch (e) { saved = {}; }
+    settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    // Sanitize nightlightMinutes: a non-numeric/zero/negative value stored
+    // (or injected via a corrupted saved blob) would make durMs NaN or 0,
+    // and since nightlightFrame only terminates via `p >= 1`, a NaN/±Infinity
+    // p would leave the nightlight rAF loop running forever.
+    const n = Number(settings.nightlightMinutes);
+    settings.nightlightMinutes = (isFinite(n) && n > 0) ? n : DEFAULT_SETTINGS.nightlightMinutes;
+  }
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
+    catch (e) { /* storage unavailable — settings just won't persist */ }
   }
 
-  var s = load();
-  function load(){
-    try {
-      var raw = localStorage.getItem(KEY);
-      if (!raw) return defaults();
-      var parsed = JSON.parse(raw);
-      return Object.assign(defaults(), parsed);
-    } catch(e){ return defaults(); }
-  }
-  function save(){
-    try { localStorage.setItem(KEY, JSON.stringify(s)); } catch(e){}
-  }
-
-  // ---------- DOM refs ----------
-  var app = document.getElementById('app');
-  var timeEl = document.getElementById('time');
-  var ampmEl = document.getElementById('ampm');
-  var dimOverlay = document.getElementById('dimOverlay');
-  var gear = document.getElementById('gear');
-  var panel = document.getElementById('panel');
-
-  var fmt24 = document.getElementById('fmt24');
-  var showSec = document.getElementById('showSec');
-  var bgStart = document.getElementById('bgStart');
-  var digitStart = document.getElementById('digitStart');
-  var bgEnd = document.getElementById('bgEnd');
-  var digitEnd = document.getElementById('digitEnd');
-  var duration = document.getElementById('duration');
-  var timerEnabled = document.getElementById('timerEnabled');
-  var manualDimSlider = document.getElementById('manualDim');
-  var flipRotation = document.getElementById('flipRotation');
-
-  // ---------- color helpers ----------
-  function hexToRgb(hex){
-    hex = hex.replace('#','');
-    if (hex.length === 3) hex = hex.split('').map(function(c){return c+c;}).join('');
-    var n = parseInt(hex, 16);
-    return { r: (n>>16)&255, g: (n>>8)&255, b: n&255 };
-  }
-  function rgbToStr(rgb){ return 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')'; }
-  function lerp(a,b,t){ return a + (b-a)*t; }
-  function lerpColor(hexA, hexB, t){
-    var a = hexToRgb(hexA), b = hexToRgb(hexB);
-    return rgbToStr({
-      r: Math.round(lerp(a.r,b.r,t)),
-      g: Math.round(lerp(a.g,b.g,t)),
-      b: Math.round(lerp(a.b,b.b,t))
-    });
+  // ---------------------------------------------------------------------
+  // 3.2 Time-format builder (pure function)
+  // ---------------------------------------------------------------------
+  function buildTimeString(date, s) {
+    let h = date.getHours();
+    let displayHour = s.hour12 ? (h % 12 || 12) : h;
+    let hourStr = String(displayHour).padStart(2, '0');
+    if (s.removeLeadingZero && hourStr[0] === '0') hourStr = hourStr.slice(1);
+    const minStr = String(date.getMinutes()).padStart(2, '0');
+    const sep = s.removeColon ? '' : ':';
+    let out = hourStr + sep + minStr;
+    if (s.showSeconds) out += sep + String(date.getSeconds()).padStart(2, '0');
+    return out;
   }
 
-  // ---------- populate UI from state ----------
-  function syncUIFromState(){
-    fmt24.checked = s.format24;
-    showSec.checked = s.showSeconds;
-    bgStart.value = s.bgStart;
-    digitStart.value = s.digitStart;
-    bgEnd.value = s.bgEnd;
-    digitEnd.value = s.digitEnd;
-    duration.value = s.durationMin;
-    timerEnabled.checked = s.timerEnabled;
-    manualDimSlider.value = s.manualDim;
-    flipRotation.checked = s.flipRotation;
-  }
-  syncUIFromState();
+  // ---------------------------------------------------------------------
+  // DOM refs
+  // ---------------------------------------------------------------------
+  const rotator = document.getElementById('rotator');
+  const stage = document.getElementById('stage');
+  const clockWrap = document.getElementById('clock-wrap');
+  const digitsEl = document.getElementById('digits');
+  const nightlightOverlay = document.getElementById('nightlight-overlay');
+  const dimOverlay = document.getElementById('dim-overlay');
+  const nightlightBtn = document.getElementById('nightlight-btn');
+  const gearBtn = document.getElementById('gear-btn');
+  const settingsSheet = document.getElementById('settings-sheet');
+  const doneBtn = document.getElementById('done-btn');
 
-  // ---------- clock ----------
-  function pad(n){ return n < 10 ? '0'+n : ''+n; }
-  function updateClock(){
-    var now = new Date();
-    var h = now.getHours();
-    var m = now.getMinutes();
-    var sec = now.getSeconds();
-    var ampmText = '';
-    if (!s.format24){
-      ampmText = h >= 12 ? 'PM' : 'AM';
-      h = h % 12; if (h === 0) h = 12;
+  const optHour12 = document.getElementById('opt-hour12');
+  const optSeconds = document.getElementById('opt-seconds');
+  const optLeadZero = document.getElementById('opt-lead-zero');
+  const optColon = document.getElementById('opt-colon');
+  const optNightlightMinutes = document.getElementById('opt-nightlight-minutes');
+  const optFlip = document.getElementById('opt-flip');
+
+  let settingsOpen = false;
+  let manualDim = 0; // not persisted — resets to 0 on fresh load
+
+  // ---------------------------------------------------------------------
+  // Rotation
+  // ---------------------------------------------------------------------
+  function applyFlip() {
+    const deg = settings.flipDirection === 'cw' ? 90 : -90;
+    rotator.style.transform = 'translate(-50%,-50%) rotate(' + deg + 'deg)';
+  }
+
+  // ---------------------------------------------------------------------
+  // 3.3 Fit engine (digit sizing) — top priority feature
+  // ---------------------------------------------------------------------
+  let lastLen = null;
+  let forceRefit = true;
+
+  function fitDigits(str) {
+    const box = clockWrap.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) {
+      // Layout hasn't settled yet (e.g. called before the box has a size) —
+      // committing to a search now would lock in a tiny 20px result with
+      // nothing left to trigger a retry. Force another attempt shortly.
+      forceRefit = true;
+      requestAnimationFrame(function () { fitDigits(str); });
+      return;
     }
-    var str = pad(h) + ':' + pad(m);
-    if (s.showSeconds) str += ':' + pad(sec);
-    timeEl.textContent = str;
-    ampmEl.textContent = ampmText;
-  }
-
-  // ---------- color / dim engine ----------
-  function currentFraction(){
-    if (!s.timerEnabled || !s.timerStartTs) return 0;
-    var elapsedMs = Date.now() - s.timerStartTs;
-    var totalMs = Math.max(1, s.durationMin) * 60000;
-    var f = elapsedMs / totalMs;
-    if (f < 0) f = 0;
-    if (f > 1) f = 1;
-    return f;
-  }
-
-  function applyColors(){
-    var f = currentFraction();
-    var bg = lerpColor(s.bgStart, s.bgEnd, f);
-    var fg = lerpColor(s.digitStart, s.digitEnd, f);
-    app.style.backgroundColor = bg;
-    timeEl.style.color = fg;
-    ampmEl.style.color = fg;
-    dimOverlay.style.opacity = (s.manualDim / 100);
-  }
-
-  // ---------- ticking ----------
-  function tick(){
-    updateClock();
-    applyColors();
-    fitClock();
-  }
-  setInterval(tick, s.showSeconds ? 1000 : 5000);
-  tick();
-
-  // ---------- font fit ----------
-  function availableSize(){
-    var rotated = document.body.classList.contains('force-rotate-cw') || document.body.classList.contains('force-rotate-ccw');
-    return rotated
-      ? { w: window.innerHeight, h: window.innerWidth }
-      : { w: window.innerWidth, h: window.innerHeight };
-  }
-  function fitClock(){
-    var maxVmin = 40;
-    timeEl.style.fontSize = maxVmin + 'vmin';
-    var tries = 0;
-    var size = availableSize();
-    while (tries < 30 && (timeEl.scrollWidth > size.w * 0.94 || timeEl.scrollHeight > size.h * 0.7)){
-      maxVmin -= 1.2;
-      timeEl.style.fontSize = maxVmin + 'vmin';
-      tries++;
+    let lo = 20, hi = Math.max(box.width, box.height) * 3, best = lo;
+    for (let i = 0; i < 16; i++) {
+      const mid = (lo + hi) / 2;
+      digitsEl.style.fontSize = mid + 'px';
+      digitsEl.textContent = str; // must set text before measuring
+      const r = digitsEl.getBoundingClientRect();
+      if (r.width <= box.width * 0.98 && r.height <= box.height * 0.98) { best = mid; lo = mid; }
+      else hi = mid;
     }
+    digitsEl.style.fontSize = best + 'px';
   }
 
-  // ---------- orientation: fixed landscape mode ----------
-  // Confirmed on-device: when this app is launched from the Home Screen,
-  // iOS freezes screen.orientation/window.orientation/innerWidth/innerHeight
-  // at the launch reading and never updates them again, even after physically
-  // rotating the phone. That's a known limitation of legacy "apple-mobile-
-  // web-app-capable" standalone apps (no manifest.json). Since there's no
-  // reliable signal to detect a live rotation, we always render rotated into
-  // landscape - hold the phone sideways to use the clock. Use "Flip landscape
-  // rotation" in settings if it comes out upside-down for you.
-  function syncOrientation(){
-    document.body.classList.remove('force-rotate-cw', 'force-rotate-ccw');
-    document.body.classList.add(s.flipRotation ? 'force-rotate-ccw' : 'force-rotate-cw');
-    fitClock();
-  }
-  window.addEventListener('resize', syncOrientation);
-  syncOrientation();
-
-  // ---------- settings panel ----------
-  var gearTimeout;
-  function showGear(){
-    gear.classList.add('visible');
-    clearTimeout(gearTimeout);
-    gearTimeout = setTimeout(function(){ gear.classList.remove('visible'); }, 3500);
-  }
-  showGear();
-
-  function openPanel(){ panel.classList.add('open'); }
-  function closePanel(){ panel.classList.remove('open'); persistFromUI(); }
-
-  // Bind both click AND a touch-tap fallback, since a single event type
-  // occasionally fails to register on iOS standalone home-screen apps.
-  function bindTap(el, handler){
-    if (!el) return;
-    el.addEventListener('click', handler);
-    var sx = 0, sy = 0, tracking = false;
-    el.addEventListener('touchstart', function(e){
-      tracking = true;
-      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
-    }, { passive: true });
-    el.addEventListener('touchend', function(e){
-      if (!tracking) return;
-      tracking = false;
-      var t = e.changedTouches[0];
-      if (Math.abs(t.clientX - sx) < 10 && Math.abs(t.clientY - sy) < 10){
-        e.preventDefault();
-        handler();
-      }
-    });
-  }
-
-  bindTap(gear, openPanel);
-  bindTap(document.getElementById('closePanel'), closePanel);
-
-  function persistFromUI(){
-    s.format24 = fmt24.checked;
-    s.showSeconds = showSec.checked;
-    s.bgStart = bgStart.value;
-    s.digitStart = digitStart.value;
-    s.bgEnd = bgEnd.value;
-    s.digitEnd = digitEnd.value;
-    s.durationMin = Math.max(1, parseInt(duration.value, 10) || 20);
-    var wasEnabled = s.timerEnabled;
-    s.timerEnabled = timerEnabled.checked;
-    if (s.timerEnabled && !wasEnabled){
-      s.timerStartTs = Date.now();
+  function tick() {
+    const str = buildTimeString(new Date(), settings);
+    if (forceRefit || str.length !== lastLen) {
+      fitDigits(str);
+      lastLen = str.length;
+      forceRefit = false;
     }
-    if (!s.timerEnabled){
-      s.timerStartTs = null;
-    }
-    s.manualDim = parseInt(manualDimSlider.value, 10) || 0;
-    s.flipRotation = flipRotation.checked;
-    save();
-    tick();
-    syncOrientation();
+    digitsEl.textContent = str;
   }
 
-  [fmt24, showSec, bgStart, digitStart, bgEnd, digitEnd, duration, timerEnabled, flipRotation].forEach(function(el){
-    el.addEventListener('change', persistFromUI);
-    el.addEventListener('input', persistFromUI);
-  });
-  manualDimSlider.addEventListener('input', function(){
-    s.manualDim = parseInt(manualDimSlider.value, 10) || 0;
-    dimOverlay.style.opacity = s.manualDim / 100;
-    save();
-  });
+  // ---------------------------------------------------------------------
+  // 3.4 Nightlight state machine
+  // ---------------------------------------------------------------------
+  let nightlight = { state: 'idle', start: 0, durMs: 0, gen: 0 };
 
-  bindTap(document.getElementById('restartTimer'), function(){
-    s.timerEnabled = true;
-    s.timerStartTs = Date.now();
-    timerEnabled.checked = true;
-    save();
-    tick();
-  });
-  bindTap(document.getElementById('stopTimer'), function(){
-    s.timerEnabled = false;
-    s.timerStartTs = null;
-    timerEnabled.checked = false;
-    save();
-    tick();
-  });
+  function startNightlight() {
+    let durMs = settings.nightlightMinutes * 60000;
+    if (!isFinite(durMs) || durMs <= 0) durMs = DEFAULT_SETTINGS.nightlightMinutes * 60000;
+    const gen = (nightlight.gen || 0) + 1;
+    nightlight = { state: 'active', start: Date.now(), durMs: durMs, gen: gen };
+    requestAnimationFrame(function () { nightlightFrame(gen); });
+  }
+  function cancelNightlight() {
+    nightlight.state = 'idle';
+    nightlight.gen = (nightlight.gen || 0) + 1; // invalidate any in-flight rAF frames
+    nightlightOverlay.style.opacity = 0;
+    digitsEl.style.opacity = 1;
+    checkForUpdate();
+  }
+  function nightlightFrame(gen) {
+    // A frame scheduled for a nightlight "session" that has since been
+    // cancelled/restarted (e.g. a leftover pre-backgrounding rAF racing the
+    // visibilitychange handler's own re-scheduled frame) is stale — bail out
+    // as a no-op instead of double-writing opacity or double-cancelling.
+    if (nightlight.state !== 'active' || nightlight.gen !== gen) return;
+    const p = Math.min(1, (Date.now() - nightlight.start) / nightlight.durMs);
+    nightlightOverlay.style.opacity = 1 - p;
+    digitsEl.style.opacity = p;
+    if (p >= 1) { cancelNightlight(); return; }
+    requestAnimationFrame(function () { nightlightFrame(gen); });
+  }
 
-  bindTap(document.getElementById('presetNightlight'), function(){
-    s.bgStart = '#ffffff'; s.digitStart = '#e30000';
-    s.bgEnd = '#000000'; s.digitEnd = '#3a0000';
-    s.durationMin = 20;
-    s.timerEnabled = true; s.timerStartTs = Date.now();
-    save(); syncUIFromState(); tick();
-  });
-  bindTap(document.getElementById('presetClassic'), function(){
-    s.bgStart = '#000000'; s.digitStart = '#ff2b2b';
-    s.bgEnd = '#000000'; s.digitEnd = '#ff2b2b';
-    s.timerEnabled = false; s.timerStartTs = null;
-    save(); syncUIFromState(); tick();
-  });
-  bindTap(document.getElementById('resetAll'), function(){
-    s = defaults();
-    save(); syncUIFromState(); tick();
-  });
+  // ---------------------------------------------------------------------
+  // 3.6 Gesture handler — rotation-aware math
+  // ---------------------------------------------------------------------
+  let dimState = null;
+  let lastTap = { t: 0, x: 0, y: 0 };
 
-  // ---------- swipe to dim / brighten ----------
-  var touchStartY = null;
-  var startDim = 0;
-  var SWIPE_RANGE_PX = 320; // slow, deliberate swipe spans this many px for full 0-90 range
+  function isControlTarget(target) {
+    return !!(target && target.closest &&
+      target.closest('#gear-btn, #nightlight-btn, #settings-sheet'));
+  }
 
-  document.addEventListener('touchstart', function(e){
-    if (panel.classList.contains('open')) return;
-    if (e.touches.length !== 1) return;
-    touchStartY = e.touches[0].clientY;
-    startDim = s.manualDim;
-    showGear();
-  }, { passive: true });
+  stage.addEventListener('touchstart', function (e) {
+    if (isControlTarget(e.target)) return; // buttons/sheet handle their own taps
+    if (e.touches.length > 1) return; // multi-touch: a 2nd finger landing near the 1st must not read as a double-tap
+    const t = e.touches[0];
+    const now = Date.now();
+    const isDoubleTap = (now - lastTap.t < 300 && Math.hypot(t.clientX - lastTap.x, t.clientY - lastTap.y) < 30);
+    lastTap = { t: now, x: t.clientX, y: t.clientY };
 
-  document.addEventListener('touchmove', function(e){
-    if (panel.classList.contains('open') || touchStartY === null) return;
-    var dy = e.touches[0].clientY - touchStartY; // positive = swiped down
-    var delta = (dy / SWIPE_RANGE_PX) * 90;
-    var newDim = startDim + delta;
-    if (newDim < 0) newDim = 0;
-    if (newDim > 90) newDim = 90;
-    s.manualDim = Math.round(newDim);
-    dimOverlay.style.opacity = s.manualDim / 100;
-    manualDimSlider.value = s.manualDim;
-  }, { passive: true });
+    if (nightlight.state === 'active') {
+      // Any tap — single or double — dismisses an active nightlight. Bail
+      // out before arming dimState so this same cancelling touch can't also
+      // start a drag-dim gesture (e.g. from finger jitter before lift).
+      cancelNightlight();
+      return;
+    }
 
-  document.addEventListener('touchend', function(){
-    if (touchStartY === null) return;
-    touchStartY = null;
-    save();
-  });
-
-  // double-tap clock to reset brightness to full
-  var lastTap = 0;
-  document.addEventListener('touchend', function(e){
-    var now = Date.now();
-    if (now - lastTap < 300){
-      s.manualDim = 0;
+    if (isDoubleTap) {
+      manualDim = 0;
       dimOverlay.style.opacity = 0;
-      manualDimSlider.value = 0;
-      save();
     }
-    lastTap = now;
-  });
+    dimState = { startX: t.clientX, startVal: manualDim };
+  }, { passive: true });
 
-  document.addEventListener('touchstart', function(){ showGear(); }, { passive: true });
+  stage.addEventListener('touchmove', function (e) {
+    if (!dimState) return;
+    const t = e.touches[0];
+    const raw = t.clientX - dimState.startX;
+    const dragAmount = settings.flipDirection === 'cw' ? -raw : raw;
+    const range = window.innerWidth * 0.6;
+    manualDim = Math.min(1, Math.max(0, dimState.startVal + dragAmount / range));
+    dimOverlay.style.opacity = manualDim;
+  }, { passive: true });
 
-  // ---------- keep screen awake ----------
-  var wakeLock = null;
-  function requestWakeLock(){
-    if ('wakeLock' in navigator){
-      navigator.wakeLock.request('screen').then(function(lock){
-        wakeLock = lock;
-      }).catch(function(){ /* ignore - not fatal */ });
-    }
+  stage.addEventListener('touchend', function () { dimState = null; }, { passive: true });
+  stage.addEventListener('touchcancel', function () { dimState = null; }, { passive: true });
+
+  // Classic iOS Safari fix: a no-op document-level touchstart listener
+  // enables the :active CSS pseudo-class on tapped elements (buttons).
+  document.addEventListener('touchstart', function () {}, { passive: true });
+
+  // ---------------------------------------------------------------------
+  // 3.7 Wake Lock
+  // ---------------------------------------------------------------------
+  let wakeLock = null;
+  async function acquireWakeLock() {
+    try {
+      if (!('wakeLock' in navigator)) return;
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', function () { wakeLock = null; });
+    } catch (e) { /* ignore — e.g. not supported, or page not visible */ }
   }
-  requestWakeLock();
-  document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState === 'visible') requestWakeLock();
+
+  // ---------------------------------------------------------------------
+  // 3.8 Version check / forced reload
+  //
+  // IMPORTANT: whoever edits this file for a new deploy MUST bump BOTH
+  // the APP_VERSION constant below AND the "version" field in
+  // version.json to the same new string (e.g. a new date+counter, like
+  // "2026-08-29.1"). If these two values ever go out of sync on GitHub,
+  // JP's phone will either never notice the update or will reload in a
+  // loop, so keep them identical on every deploy.
+  // ---------------------------------------------------------------------
+  const APP_VERSION = "2026-08-28.1"; // MUST match version.json's "version" field
+
+  async function checkForUpdate() {
+    if (settingsOpen || nightlight.state === 'active') return;
+    try {
+      const res = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const version = data.version;
+      if (version && version !== APP_VERSION) {
+        // Circuit breaker: if we already reloaded with this exact target
+        // version (its "v" query param) and APP_VERSION is still stale,
+        // the HTML deploy is lagging/broken — reassigning location.href
+        // again would just reload the same broken page forever. Stop.
+        const alreadyTried = new URL(location.href).searchParams.get('v') === version;
+        if (alreadyTried) return;
+        const url = new URL(location.href);
+        url.searchParams.set('v', version);
+        location.href = url.toString();
+      }
+    } catch (e) { /* offline — retry on next trigger */ }
+  }
+
+  function onSettingsClose() {
+    settingsOpen = false;
+    checkForUpdate();
+  }
+
+  // ---------------------------------------------------------------------
+  // Settings sheet wiring
+  // ---------------------------------------------------------------------
+  function reflectSettingsToUI() {
+    optHour12.checked = !!settings.hour12;
+    optSeconds.checked = !!settings.showSeconds;
+    optLeadZero.checked = !!settings.removeLeadingZero;
+    optColon.checked = !!settings.removeColon;
+    optNightlightMinutes.value = String(settings.nightlightMinutes);
+    optFlip.checked = settings.flipDirection === 'ccw';
+  }
+
+  function openSettings() {
+    settingsOpen = true;
+    reflectSettingsToUI();
+    settingsSheet.hidden = false;
+  }
+  function closeSettings() {
+    settingsSheet.hidden = true;
+    onSettingsClose();
+  }
+
+  gearBtn.addEventListener('click', openSettings);
+  doneBtn.addEventListener('click', closeSettings);
+  // Tap outside the inner panel (on the sheet backdrop itself) closes it.
+  settingsSheet.addEventListener('click', function (e) {
+    if (e.target === settingsSheet) closeSettings();
   });
 
-  // keep the interpolation animating smoothly while timer active
-  setInterval(function(){
-    if (s.timerEnabled) applyColors();
-  }, 2000);
+  optHour12.addEventListener('change', function () {
+    settings.hour12 = optHour12.checked;
+    saveSettings(); forceRefit = true;
+  });
+  optSeconds.addEventListener('change', function () {
+    settings.showSeconds = optSeconds.checked;
+    saveSettings(); forceRefit = true;
+  });
+  optLeadZero.addEventListener('change', function () {
+    settings.removeLeadingZero = optLeadZero.checked;
+    saveSettings(); forceRefit = true;
+  });
+  optColon.addEventListener('change', function () {
+    settings.removeColon = optColon.checked;
+    saveSettings(); forceRefit = true;
+  });
+  optNightlightMinutes.addEventListener('change', function () {
+    settings.nightlightMinutes = parseInt(optNightlightMinutes.value, 10);
+    saveSettings();
+  });
+  optFlip.addEventListener('change', function () {
+    settings.flipDirection = optFlip.checked ? 'ccw' : 'cw';
+    saveSettings();
+    applyFlip();
+    forceRefit = true;
+  });
 
+  // ---------------------------------------------------------------------
+  // Nightlight button
+  // ---------------------------------------------------------------------
+  nightlightBtn.addEventListener('click', function () {
+    if (nightlight.state === 'active') cancelNightlight();
+    else startNightlight();
+  });
+
+  // ---------------------------------------------------------------------
+  // Resize / pageshow — force a re-fit
+  // ---------------------------------------------------------------------
+  window.addEventListener('resize', function () { forceRefit = true; });
+  window.addEventListener('pageshow', function () { forceRefit = true; });
+
+  // ---------------------------------------------------------------------
+  // 3.7 / 3.4 visibilitychange — wake lock re-acquire, version check,
+  // and nightlight catch-up if progress passed 1 while backgrounded.
+  // ---------------------------------------------------------------------
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') {
+      acquireWakeLock();
+      checkForUpdate();
+      if (nightlight.state === 'active') {
+        const p = (Date.now() - nightlight.start) / nightlight.durMs;
+        if (p >= 1) cancelNightlight();
+        else requestAnimationFrame((function (gen) { return function () { nightlightFrame(gen); }; })(nightlight.gen));
+      }
+    }
+  });
+
+  window.addEventListener('load', acquireWakeLock);
+  window.addEventListener('load', function () { setTimeout(checkForUpdate, 2000); });
+  setInterval(checkForUpdate, 5 * 60 * 1000);
+
+  // ---------------------------------------------------------------------
+  // 3.9 Init
+  // ---------------------------------------------------------------------
+  document.addEventListener('DOMContentLoaded', function () {
+    loadSettings();
+    applyFlip();
+    reflectSettingsToUI();
+
+    requestAnimationFrame(function () {
+      forceRefit = true;
+      tick();
+    });
+    setInterval(tick, 200);
+    acquireWakeLock();
+  });
 })();
 </script>
 </body>
