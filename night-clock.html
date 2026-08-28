@@ -205,8 +205,9 @@
 
           <button id="done-btn">Done</button>
 
-          <div id="version-row" style="margin-top:14px; text-align:center; font-size:13px; color:#a55; opacity:0.8;">
-            Version <span id="version-value">—</span>
+          <div id="version-row" style="margin-top:14px; text-align:center; font-size:13px; color:#a55; opacity:0.8; line-height:1.6;">
+            Version <span id="version-value">—</span><br>
+            Wake Lock: <span id="wakelock-status">—</span>
           </div>
         </div>
       </div>
@@ -278,6 +279,7 @@
   const doneBtn = document.getElementById('done-btn');
   const keepAwakeVideo = document.getElementById('keep-awake-video');
   const versionValueEl = document.getElementById('version-value');
+  const wakeLockStatusEl = document.getElementById('wakelock-status');
 
   const optHour12 = document.getElementById('opt-hour12');
   const optSeconds = document.getElementById('opt-seconds');
@@ -477,18 +479,57 @@
   // doubles as a nudge to resume the keep-awake video, since any touch
   // interaction is a safe, reliable point to re-request it if iOS paused
   // it for any reason.
-  document.addEventListener('touchstart', function () { nudgeKeepAwakeVideo(); }, { passive: true });
+  document.addEventListener('touchstart', function () {
+    nudgeKeepAwakeVideo();
+    // Extra resilience: if the wake lock was silently dropped (or never
+    // acquired — see the diagnostic note below), a touch is a safe,
+    // frequent point to retry it without waiting for the next
+    // visibilitychange.
+    if (!wakeLockActive) acquireWakeLock();
+  }, { passive: true });
 
   // ---------------------------------------------------------------------
   // 3.7 Wake Lock
+  //
+  // DIAGNOSTIC (added 2026-08-28): JP reported the screen still sleeps
+  // even on a version confirmed to include the keep-awake video fallback.
+  // Research turned up a real WebKit bug (webkit.org/b/254545): the Wake
+  // Lock API silently did NOT work in "Add to Home Screen" standalone web
+  // apps on iOS before 18.4, even though `'wakeLock' in navigator` still
+  // reports true (feature exists, just non-functional in this app mode).
+  // It was fixed in iOS/iPadOS 18.4 (March 2025). The same bug thread also
+  // found the silent-video fallback below is itself unreliable on some
+  // devices. So there are two independent, previously invisible failure
+  // modes here — this status line surfaces which one (if either) is
+  // actually active on JP's phone, instead of guessing blind.
   // ---------------------------------------------------------------------
   let wakeLock = null;
+  let wakeLockActive = false;
+
+  function updateWakeLockStatus() {
+    if (!wakeLockStatusEl) return;
+    const supported = ('wakeLock' in navigator);
+    wakeLockStatusEl.textContent = !supported ? 'not supported'
+      : (wakeLockActive ? 'active' : 'supported, not active');
+  }
+
   async function acquireWakeLock() {
     try {
-      if (!('wakeLock' in navigator)) return;
+      if (!('wakeLock' in navigator)) { wakeLockActive = false; updateWakeLockStatus(); return; }
       wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', function () { wakeLock = null; });
-    } catch (e) { /* ignore — e.g. not supported, or page not visible */ }
+      wakeLockActive = true;
+      updateWakeLockStatus();
+      wakeLock.addEventListener('release', function () {
+        wakeLock = null;
+        wakeLockActive = false;
+        updateWakeLockStatus();
+      });
+    } catch (e) {
+      // e.g. not supported, page not visible, or (per the WebKit bug above)
+      // silently rejected in standalone mode on pre-18.4 iOS.
+      wakeLockActive = false;
+      updateWakeLockStatus();
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -533,7 +574,7 @@
   // JP's phone will either never notice the update or will reload in a
   // loop, so keep them identical on every deploy.
   // ---------------------------------------------------------------------
-  const APP_VERSION = "2026-08-28.4"; // MUST match version.json's "version" field
+  const APP_VERSION = "2026-08-28.5"; // MUST match version.json's "version" field
 
   async function checkForUpdate() {
     if (settingsOpen || nightlight.state === 'active') return;
@@ -575,6 +616,7 @@
     // phone itself whether a GitHub deploy actually reached the home-screen
     // icon (compare against the version number quoted when a fix is made).
     if (versionValueEl) versionValueEl.textContent = APP_VERSION;
+    updateWakeLockStatus();
   }
 
   function openSettings() {
