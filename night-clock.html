@@ -566,7 +566,8 @@
       : (wakeLockActive ? 'active' : 'supported, not active');
   }
 
-  async function acquireWakeLock() {
+  async function acquireWakeLock(retryCount) {
+    retryCount = retryCount || 0;
     try {
       if (!('wakeLock' in navigator)) { wakeLockActive = false; updateWakeLockStatus(); return; }
       wakeLock = await navigator.wakeLock.request('screen');
@@ -580,11 +581,18 @@
         logDiag('wakelock-released');
       });
     } catch (e) {
-      // e.g. not supported, page not visible, or (per the WebKit bug above)
-      // silently rejected in standalone mode on pre-18.4 iOS.
+      // e.g. not supported, page not visible/focused, or (per the WebKit
+      // bug above) silently rejected in standalone mode on pre-18.4 iOS.
+      // Log the real reason so future failures are diagnosable, and retry
+      // once after a short delay: on iOS the page can report "visible"
+      // via visibilitychange a beat before it's actually focused enough
+      // for the Wake Lock API to succeed.
       wakeLockActive = false;
       updateWakeLockStatus();
-      logDiag('wakelock-error');
+      logDiag('wakelock-error: ' + (e && e.name ? e.name : 'unknown') + (e && e.message ? ' - ' + e.message : ''));
+      if (retryCount < 2) {
+        setTimeout(function () { acquireWakeLock(retryCount + 1); }, 600);
+      }
     }
   }
 
@@ -630,7 +638,7 @@
   // JP's phone will either never notice the update or will reload in a
   // loop, so keep them identical on every deploy.
   // ---------------------------------------------------------------------
-  const APP_VERSION = "2026-08-28.6"; // MUST match version.json's "version" field
+  const APP_VERSION = "2026-08-30.1"; // MUST match version.json's "version" field
 
   async function checkForUpdate() {
     if (settingsOpen || nightlight.state === 'active') return;
