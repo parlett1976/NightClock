@@ -566,35 +566,64 @@
       : (wakeLockActive ? 'active' : 'supported, not active');
   }
 
-  async function acquireWakeLock(retryCount) {
-    retryCount = retryCount || 0;
-    try {
-      if (!('wakeLock' in navigator)) { wakeLockActive = false; updateWakeLockStatus(); return; }
-      wakeLock = await navigator.wakeLock.request('screen');
+  let wakeRequestPending = false;
+  let wakeRetryTimer = null;
+
+  function scheduleWakeRetry() {
+    if (document.visibilityState !== 'visible' || wakeRetryTimer !== null) return;
+    wakeRetryTimer = setTimeout(function () {
+      wakeRetryTimer = null;
+      acquireWakeLock();
+    }, 1500);
+  }
+
+  async function acquireWakeLock() {
+    if (document.visibilityState !== 'visible' || wakeRequestPending) return;
+    if (wakeLock && !wakeLock.released) {
       wakeLockActive = true;
       updateWakeLockStatus();
+      return;
+    }
+    if (!('wakeLock' in navigator)) {
+      wakeLockActive = false;
+      updateWakeLockStatus();
+      return;
+    }
+    wakeRequestPending = true;
+    try {
+      const sentinel = await navigator.wakeLock.request('screen');
+      wakeLock = sentinel;
+      wakeLockActive = !sentinel.released;
+      updateWakeLockStatus();
       logDiag('wakelock-acquired');
-      wakeLock.addEventListener('release', function () {
+      sentinel.addEventListener('release', function () {
+        // A stale sentinel must never erase a newer lock.
+        if (wakeLock !== sentinel) return;
         wakeLock = null;
         wakeLockActive = false;
         updateWakeLockStatus();
         logDiag('wakelock-released');
+        scheduleWakeRetry();
       });
+      if (sentinel.released) scheduleWakeRetry();
     } catch (e) {
-      // e.g. not supported, page not visible/focused, or (per the WebKit
-      // bug above) silently rejected in standalone mode on pre-18.4 iOS.
-      // Log the real reason so future failures are diagnosable, and retry
-      // once after a short delay: on iOS the page can report "visible"
-      // via visibilitychange a beat before it's actually focused enough
-      // for the Wake Lock API to succeed.
       wakeLockActive = false;
       updateWakeLockStatus();
-      logDiag('wakelock-error: ' + (e && e.name ? e.name : 'unknown') + (e && e.message ? ' - ' + e.message : ''));
-      if (retryCount < 2) {
-        setTimeout(function () { acquireWakeLock(retryCount + 1); }, 600);
-      }
+      logDiag('wakelock-error: ' + (e && e.name ? e.name : 'unknown'));
+      // The watchdog retries failures without creating an endless fast loop.
+    } finally {
+      wakeRequestPending = false;
     }
   }
+
+  // Recover after OS releases, focus changes and back/forward-cache restores.
+  window.addEventListener('focus', function () { acquireWakeLock(); });
+  window.addEventListener('pageshow', function () { acquireWakeLock(); });
+  setInterval(function () {
+    if (document.visibilityState !== 'visible') return;
+    acquireWakeLock();
+    if (keepAwakeVideo && keepAwakeVideo.paused) nudgeKeepAwakeVideo();
+  }, 15000);
 
   // ---------------------------------------------------------------------
   // Keep-awake fallback (silent looping video)
@@ -638,7 +667,7 @@
   // JP's phone will either never notice the update or will reload in a
   // loop, so keep them identical on every deploy.
   // ---------------------------------------------------------------------
-  const APP_VERSION = "2026-08-30.1"; // MUST match version.json's "version" field
+  const APP_VERSION = "2026-10-16.1"; // MUST match version.json's "version" field
 
   async function checkForUpdate() {
     if (settingsOpen || nightlight.state === 'active') return;
