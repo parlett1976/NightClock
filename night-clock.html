@@ -123,6 +123,21 @@
     background: #a00000; color: #fff; border: none; border-radius: 8px;
     font-size: 18px; font-weight: 700;
   }
+
+  #viewport-ui {
+    position: fixed; z-index: 50; pointer-events: none;
+  }
+  #viewport-ui #gear-btn {
+    pointer-events: auto; top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+    width: auto; min-height: 52px; padding: 0 16px;
+    border: 1px solid #900; border-radius: 12px;
+    background: #180000; color: #ff5555; opacity: 1;
+    font: bold 20px -apple-system, system-ui, sans-serif;
+  }
+  #viewport-ui #settings-sheet { pointer-events: auto; }
+  #settings-panel { box-sizing: border-box; max-height: 88%; touch-action: pan-y; }
+  #version-row { font-size: 18px !important; opacity: 1 !important; color: #ff7777 !important; }
 </style>
 </head>
 <body>
@@ -144,7 +159,7 @@
       <div id="nightlight-overlay"></div>
       <div id="dim-overlay"></div>
       <button id="nightlight-btn" aria-label="Nightlight">&#9789;</button>
-      <button id="gear-btn" aria-label="Settings">&#9881;</button>
+      <button id="gear-btn" aria-label="Settings">⚙ Settings</button>
 
       <div id="settings-sheet" hidden>
         <div id="settings-panel">
@@ -294,6 +309,13 @@
   const optNightlightMinutes = document.getElementById('opt-nightlight-minutes');
   const optFlip = document.getElementById('opt-flip');
 
+  // Keep controls outside the rotated clock so they remain upright and reachable.
+  const viewportUI = document.createElement('div');
+  viewportUI.id = 'viewport-ui';
+  document.body.appendChild(viewportUI);
+  viewportUI.appendChild(gearBtn);
+  viewportUI.appendChild(settingsSheet);
+
   let settingsOpen = false;
   let manualDim = 0; // not persisted — resets to 0 on fresh load
 
@@ -378,17 +400,26 @@
   let currentRotation = 0;
 
   function updateOrientation() {
-    const w = window.innerWidth, h = window.innerHeight;
+    const vv = window.visualViewport;
+    const w = vv ? vv.width : window.innerWidth;
+    const h = vv ? vv.height : window.innerHeight;
+    const x = vv ? vv.offsetLeft : 0;
+    const y = vv ? vv.offsetTop : 0;
+    rotator.style.left = (x + w / 2) + 'px';
+    rotator.style.top = (y + h / 2) + 'px';
+    Object.assign(viewportUI.style, {
+      left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px'
+    });
     const needsRotation = w < h; // viewport is portrait-shaped right now
     if (needsRotation) {
       currentRotation = settings.flipDirection === 'cw' ? 90 : -90;
-      rotator.style.width = '100vh';
-      rotator.style.height = '100vw';
+      rotator.style.width = h + 'px';
+      rotator.style.height = w + 'px';
       rotator.style.transform = 'translate(-50%,-50%) rotate(' + currentRotation + 'deg)';
     } else {
       currentRotation = 0;
-      rotator.style.width = '100vw';
-      rotator.style.height = '100vh';
+      rotator.style.width = w + 'px';
+      rotator.style.height = h + 'px';
       rotator.style.transform = 'translate(-50%,-50%) rotate(0deg)';
     }
     forceRefit = true;
@@ -667,7 +698,7 @@
   // JP's phone will either never notice the update or will reload in a
   // loop, so keep them identical on every deploy.
   // ---------------------------------------------------------------------
-  const APP_VERSION = "2026-10-16.1"; // MUST match version.json's "version" field
+  const APP_VERSION = "2026-10-16.2"; // MUST match version.json's "version" field
 
   async function checkForUpdate() {
     if (settingsOpen || nightlight.state === 'active') return;
@@ -771,6 +802,10 @@
   // genuinely changed (see the Rotation section above for why this
   // matters — this is the fix for the double-rotation bug).
   // ---------------------------------------------------------------------
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', updateOrientation);
+    window.visualViewport.addEventListener('scroll', updateOrientation);
+  }
   window.addEventListener('resize', updateOrientation);
   window.addEventListener('orientationchange', updateOrientation);
   window.addEventListener('pageshow', updateOrientation);
