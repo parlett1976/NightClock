@@ -159,7 +159,7 @@
       <div id="nightlight-overlay"></div>
       <div id="dim-overlay"></div>
       <button id="nightlight-btn" aria-label="Nightlight">&#9789;</button>
-      <button id="gear-btn" aria-label="Settings">⚙ Settings</button>
+      <button id="gear-btn" aria-label="Settings">⚙</button>
 
       <div id="settings-sheet" hidden>
         <div id="settings-panel">
@@ -222,7 +222,7 @@
 
           <div id="version-row" style="margin-top:14px; text-align:center; font-size:13px; color:#a55; opacity:0.8; line-height:1.6;">
             Version <span id="version-value">—</span><br>
-            Wake Lock: <span id="wakelock-status">—</span>
+            Wake Lock: <span id="wakelock-status">—</span><br>Video fallback: <span id="video-status">—</span>
           </div>
 
           <div id="diag-row" style="margin-top:10px; text-align:left; font-size:11px; color:#a55; opacity:0.7; max-height:120px; overflow-y:auto; border-top:1px solid #300; padding-top:8px;">
@@ -298,6 +298,7 @@
   const settingsSheet = document.getElementById('settings-sheet');
   const doneBtn = document.getElementById('done-btn');
   const keepAwakeVideo = document.getElementById('keep-awake-video');
+  const videoStatusEl = document.getElementById('video-status');
   const versionValueEl = document.getElementById('version-value');
   const wakeLockStatusEl = document.getElementById('wakelock-status');
   const diagLogEl = document.getElementById('diag-log');
@@ -525,6 +526,7 @@
     if (isDoubleTap) {
       manualDim = 0;
       dimOverlay.style.opacity = 0;
+      gearBtn.style.opacity = 0.35;
     }
     // Track both axes — which one matters depends on currentRotation,
     // and that can change (device turned) between touchstart and touchmove.
@@ -553,6 +555,7 @@
     const range = localHeight * 0.6;
     manualDim = Math.min(1, Math.max(0, dimState.startVal + dragAmount / range));
     dimOverlay.style.opacity = manualDim;
+    gearBtn.style.opacity = String(0.35 * (1 - manualDim));
   }, { passive: true });
 
   stage.addEventListener('touchend', function () { dimState = null; }, { passive: true });
@@ -654,6 +657,7 @@
     if (document.visibilityState !== 'visible') return;
     acquireWakeLock();
     if (keepAwakeVideo && keepAwakeVideo.paused) nudgeKeepAwakeVideo();
+    updateVideoStatus();
   }, 15000);
 
   // ---------------------------------------------------------------------
@@ -675,13 +679,42 @@
   // foreground, and on every touch, since iOS can pause background video
   // and needs a nudge to resume it.
   // ---------------------------------------------------------------------
+  let lastVideoError = '';
+  function updateVideoStatus() {
+    if (!videoStatusEl || !keepAwakeVideo) return;
+    videoStatusEl.textContent = keepAwakeVideo.paused
+      ? ('paused' + (lastVideoError ? ' (' + lastVideoError + ')' : ''))
+      : 'playing';
+  }
   function nudgeKeepAwakeVideo() {
-    if (!keepAwakeVideo) return;
-    var p = keepAwakeVideo.play();
-    if (p && typeof p.catch === 'function') p.catch(function () { /* ignore — retried on next nudge */ });
+    if (!keepAwakeVideo || document.visibilityState !== 'visible') return;
+    let p;
+    try { p = keepAwakeVideo.play(); }
+    catch (e) {
+      const name = e && e.name ? e.name : 'unknown';
+      if (name !== lastVideoError) logDiag('video-error: ' + name);
+      lastVideoError = name;
+      updateVideoStatus();
+      return;
+    }
+    if (p && typeof p.then === 'function') {
+      p.then(function () {
+        if (lastVideoError) logDiag('video-playing');
+        lastVideoError = '';
+        updateVideoStatus();
+      }).catch(function (e) {
+        const name = e && e.name ? e.name : 'unknown';
+        if (name !== lastVideoError) logDiag('video-error: ' + name);
+        lastVideoError = name;
+        updateVideoStatus();
+      });
+    }
+    updateVideoStatus();
   }
   if (keepAwakeVideo) {
+    keepAwakeVideo.addEventListener('playing', updateVideoStatus);
     keepAwakeVideo.addEventListener('pause', function () {
+      updateVideoStatus();
       // iOS occasionally pauses background video on its own; resume it
       // immediately if the app is still the visible, active tab.
       if (document.visibilityState === 'visible') nudgeKeepAwakeVideo();
@@ -698,7 +731,7 @@
   // JP's phone will either never notice the update or will reload in a
   // loop, so keep them identical on every deploy.
   // ---------------------------------------------------------------------
-  const APP_VERSION = "2026-10-16.2"; // MUST match version.json's "version" field
+  const APP_VERSION = "2026-10-16.3"; // MUST match version.json's "version" field
 
   async function checkForUpdate() {
     if (settingsOpen || nightlight.state === 'active') return;
@@ -741,6 +774,7 @@
     // icon (compare against the version number quoted when a fix is made).
     if (versionValueEl) versionValueEl.textContent = APP_VERSION;
     updateWakeLockStatus();
+    updateVideoStatus();
     renderDiagLog();
   }
 
@@ -752,6 +786,9 @@
   function closeSettings() {
     settingsSheet.hidden = true;
     onSettingsClose();
+    // A direct user gesture can restore playback blocked during startup.
+    nudgeKeepAwakeVideo();
+    if (!wakeLockActive) acquireWakeLock();
   }
 
   gearBtn.addEventListener('click', openSettings);
