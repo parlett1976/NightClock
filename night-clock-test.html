@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Night Clock">
+<title>Night Clock</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; background: #000; overflow: hidden;
+    height: 100%; width: 100%; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  #rotator {
+    position: fixed; top: 50%; left: 50%;
+    transform-origin: center center;
+    background: #000;
+    /* width/height/transform are set dynamically in JS (updateOrientation) —
+       rotation is only applied when the CURRENT viewport is portrait-shaped,
+       so this never fights a device that live-updates its dimensions on
+       rotation. See the comment on updateOrientation() for why. */
+  }
+  #stage {
+    width: 100%; height: 100%; position: relative;
+  }
+
+  #clock-wrap {
+    position: absolute; inset: max(24px, 3vmin);
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  #digits {
+    font-family: -apple-system, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    line-height: 1;
+    color: #f00;
+    white-space: nowrap;
+  }
+
+  #nightlight-overlay {
+    position: absolute; inset: 0; background: #fff;
+    opacity: 0; z-index: 10; pointer-events: none;
+  }
+  #dim-overlay {
+    position: absolute; inset: 0; background: #000;
+    opacity: 0; z-index: 20; pointer-events: none;
+  }
+
+  #nightlight-btn, #gear-btn {
+    position: absolute; z-index: 30;
+    min-width: 44px; min-height: 44px;
+    width: 56px; height: 56px;
+    border: none; border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    color: #f00;
+    font-size: 26px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0.35;
+    -webkit-tap-highlight-color: transparent;
+    padding: 0;
+  }
+  #nightlight-btn:active, #gear-btn:active,
+  #nightlight-btn:focus, #gear-btn:focus {
+    opacity: 1;
+  }
+  #nightlight-btn { bottom: 10px; left: 10px; }
+  #gear-btn { top: 10px; right: 10px; }
+
+  #settings-sheet {
+    position: absolute; inset: 0; z-index: 40;
+    background: rgba(0,0,0,0.92);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #settings-sheet[hidden] { display: none; }
+  #settings-panel {
+    background: #111; border: 1px solid #400;
+    border-radius: 12px; padding: 20px 24px;
+    width: min(86%, 520px); max-height: 90%; overflow-y: auto;
+    color: #f00; font-family: -apple-system, system-ui, sans-serif;
+  }
+  #settings-panel h2 {
+    margin: 0 0 8px; font-size: 20px; color: #f00;
+  }
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 4px; border-bottom: 1px solid #300;
+    font-size: 17px;
+  }
+  .toggle-row label.text { flex: 1; padding-right: 12px; color: #f00; }
+  .toggle { position: relative; width: 74px; height: 44px; flex: 0 0 auto; }
+  .toggle input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 74px; height: 44px; margin: 0;
+    background: #442222; border-radius: 22px;
+    position: relative; cursor: pointer; outline: none;
+    display: block;
+  }
+  .toggle input[type="checkbox"]:checked { background: #a00000; }
+  .toggle .thumb {
+    position: absolute; top: 4px; left: 4px;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: #fff; pointer-events: none;
+    transition: transform 0.15s ease;
+  }
+  .toggle input[type="checkbox"]:checked ~ .thumb {
+    transform: translateX(30px);
+  }
+  .select-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 4px; border-bottom: 1px solid #300; font-size: 17px;
+  }
+  .select-row select {
+    background: #221010; color: #f00; border: 1px solid #500;
+    border-radius: 6px; font-size: 16px; padding: 6px 8px;
+  }
+  #done-btn {
+    margin-top: 18px; width: 100%; min-height: 48px;
+    background: #a00000; color: #fff; border: none; border-radius: 8px;
+    font-size: 18px; font-weight: 700;
+  }
+
+  #viewport-ui {
+    position: fixed; z-index: 50; pointer-events: none;
+  }
+  #viewport-ui #gear-btn {
+    pointer-events: auto; top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+    width: auto; min-height: 52px; padding: 0 16px;
+    border: 1px solid #900; border-radius: 12px;
+    background: #180000; color: #ff5555; opacity: 1;
+    font: bold 20px -apple-system, system-ui, sans-serif;
+  }
+  #viewport-ui #settings-sheet { pointer-events: auto; }
+  #settings-panel { box-sizing: border-box; max-height: 88%; touch-action: pan-y; }
+  #version-row { font-size: 18px !important; opacity: 1 !important; color: #ff7777 !important; }
+</style>
+</head>
+<body>
+  <!-- Hidden 1x1 silent looping video: an iOS-proven trick to keep the
+       screen from auto-locking. The Screen Wake Lock API below is tried
+       first, but its support/reliability on iOS varies by version and is
+       known to be inconsistent specifically for "Add to Home Screen"
+       standalone apps, so this silent video runs as a backup — iOS treats
+       an actively-playing video (even muted/invisible) as a reason to
+       suppress its auto-lock timer. Same technique used by NoSleep.js.
+       Inaudible, invisible, and outside #rotator so it's unaffected by
+       the rotation transform. -->
+  <video id="keep-awake-video" muted playsinline webkit-playsinline loop preload="auto" style="position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;pointer-events:none;">
+    <source src="data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMxbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAC7gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlt0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAC7gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAIAAAACAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAu4AAAAAAABAAAAAAHTbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAwABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABfm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAT5zdGJsAAAAunN0c2QAAAAAAAAAAQAAAKphdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAIAAgBIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAAMGF2Y0MBQsAe/+EAGGdCwB7ZH4iIwEQAAAMABAAAAwAIPFi5IAEABWjLg8sgAAAAEHBhc3AAAAABAAAAAQAAABRidHJ0AAAAAAAABvAAAAbwAAAAGHN0dHMAAAAAAAAAAQAAAAMAAEAAAAAAFHN0c3MAAAAAAAAAAQAAAAEAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAMAAAABAAAAIHN0c3oAAAAAAAAAAAAAAAMAAAKGAAAACgAAAAoAAAAUc3RjbwAAAAAAAAABAAADYQAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNjAuMTYuMTAwAAAACGZyZWUAAAKibWRhdAAAAnAGBf//bNxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNjQgcjMxMDggMzFlMTlmOSAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMjMgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0wIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDE6MHgxMTEgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTAgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MCB3ZWlnaHRwPTAga2V5aW50PTI1MCBrZXlpbnRfbWluPTEgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAAOZYiEBf///w9FAAFXn4AAAAAGQZo4C3qAAAAABkGaVAK+oA==" type="video/mp4">
+  </video>
+  <div id="rotator">
+    <div id="stage">
+      <div id="clock-wrap"><span id="digits"></span></div>
+      <div id="nightlight-overlay"></div>
+      <div id="dim-overlay"></div>
+      <button id="nightlight-btn" aria-label="Nightlight">&#9789;</button>
+      <button id="gear-btn" aria-label="Settings">⚙</button>
+
+      <div id="settings-sheet" hidden>
+        <div id="settings-panel">
+          <h2>Settings</h2>
+
+          <div class="toggle-row">
+            <label class="text" for="opt-hour12">12-hour clock</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-hour12">
+              <span class="thumb"></span>
+            </span>
+          </div>
+
+          <div class="toggle-row">
+            <label class="text" for="opt-seconds">Show seconds</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-seconds">
+              <span class="thumb"></span>
+            </span>
+          </div>
+
+          <div class="toggle-row">
+            <label class="text" for="opt-lead-zero">Remove leading zero</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-lead-zero">
+              <span class="thumb"></span>
+            </span>
+          </div>
+
+          <div class="toggle-row">
+            <label class="text" for="opt-colon">Remove colon</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-colon">
+              <span class="thumb"></span>
+            </span>
+          </div>
+
+          <div class="select-row">
+            <label for="opt-nightlight-minutes">Nightlight duration</label>
+            <select id="opt-nightlight-minutes">
+              <option value="1">1 min</option>
+              <option value="5">5 min</option>
+              <option value="10">10 min</option>
+              <option value="15">15 min</option>
+              <option value="20">20 min</option>
+              <option value="30">30 min</option>
+              <option value="60">60 min</option>
+            </select>
+          </div>
+
+          <div class="toggle-row">
+            <label class="text" for="opt-flip">Flip landscape direction</label>
+            <span class="toggle">
+              <input type="checkbox" id="opt-flip">
+              <span class="thumb"></span>
+            </span>
+          </div>
+
+          <button id="done-btn">Done</button>
+
+          <div id="version-row" style="margin-top:14px; text-align:center; font-size:13px; color:#a55; opacity:0.8; line-height:1.6;">
+            Version <span id="version-value">—</span><br>
+            Wake Lock: <span id="wakelock-status">—</span><br>Video fallback: <span id="video-status">—</span>
+          </div>
+
+          <div id="diag-row" style="margin-top:10px; text-align:left; font-size:11px; color:#a55; opacity:0.7; max-height:120px; overflow-y:auto; border-top:1px solid #300; padding-top:8px;">
+            <div style="text-align:center; margin-bottom:4px;">Recent activity (newest first)</div>
+            <div id="diag-log">(none yet)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------------
+  // 3.1 Settings
+  // ---------------------------------------------------------------------
+  const DEFAULT_SETTINGS = {
+    hour12: true,
+    showSeconds: false,
+    removeLeadingZero: false,
+    removeColon: false,
+    nightlightMinutes: 15,
+    flipDirection: 'cw' // 'cw' -> rotate(90deg), 'ccw' -> rotate(-90deg)
+  };
+  const SETTINGS_KEY = 'nightclock.settings.v1';
+  let settings = Object.assign({}, DEFAULT_SETTINGS);
+
+  function loadSettings() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); }
+    catch (e) { saved = {}; }
+    settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    // Sanitize nightlightMinutes: a non-numeric/zero/negative value stored
+    // (or injected via a corrupted saved blob) would make durMs NaN or 0,
+    // and since nightlightFrame only terminates via `p >= 1`, a NaN/±Infinity
+    // p would leave the nightlight rAF loop running forever.
+    const n = Number(settings.nightlightMinutes);
+    settings.nightlightMinutes = (isFinite(n) && n > 0) ? n : DEFAULT_SETTINGS.nightlightMinutes;
+  }
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
+    catch (e) { /* storage unavailable — settings just won't persist */ }
+  }
+
+  // ---------------------------------------------------------------------
+  // 3.2 Time-format builder (pure function)
+  // ---------------------------------------------------------------------
+  function buildTimeString(date, s) {
+    let h = date.getHours();
+    let displayHour = s.hour12 ? (h % 12 || 12) : h;
+    let hourStr = String(displayHour).padStart(2, '0');
+    if (s.removeLeadingZero && hourStr[0] === '0') hourStr = hourStr.slice(1);
+    const minStr = String(date.getMinutes()).padStart(2, '0');
+    const sep = s.removeColon ? '' : ':';
+    let out = hourStr + sep + minStr;
+    if (s.showSeconds) out += sep + String(date.getSeconds()).padStart(2, '0');
+    return out;
+  }
+
+  // ---------------------------------------------------------------------
+  // DOM refs
+  // ---------------------------------------------------------------------
+  const rotator = document.getElementById('rotator');
+  const stage = document.getElementById('stage');
+  const clockWrap = document.getElementById('clock-wrap');
+  const digitsEl = document.getElementById('digits');
+  const nightlightOverlay = document.getElementById('nightlight-overlay');
+  const dimOverlay = document.getElementById('dim-overlay');
+  const nightlightBtn = document.getElementById('nightlight-btn');
+  const gearBtn = document.getElementById('gear-btn');
+  const settingsSheet = document.getElementById('settings-sheet');
+  const doneBtn = document.getElementById('done-btn');
+  const keepAwakeVideo = document.getElementById('keep-awake-video');
+  const videoStatusEl = document.getElementById('video-status');
+  const versionValueEl = document.getElementById('version-value');
+  const wakeLockStatusEl = document.getElementById('wakelock-status');
+  const diagLogEl = document.getElementById('diag-log');
+
+  const optHour12 = document.getElementById('opt-hour12');
+  const optSeconds = document.getElementById('opt-seconds');
+  const optLeadZero = document.getElementById('opt-lead-zero');
+  const optColon = document.getElementById('opt-colon');
+  const optNightlightMinutes = document.getElementById('opt-nightlight-minutes');
+  const optFlip = document.getElementById('opt-flip');
+
+  // Keep controls outside the rotated clock so they remain upright and reachable.
+  const viewportUI = document.createElement('div');
+  viewportUI.id = 'viewport-ui';
+  document.body.appendChild(viewportUI);
+  viewportUI.appendChild(gearBtn);
+  viewportUI.appendChild(settingsSheet);
+
+  let settingsOpen = false;
+  let manualDim = 0; // not persisted — resets to 0 on fresh load
+
+  // ---------------------------------------------------------------------
+  // Overnight diagnostic log
+  //
+  // ADDED 2026-08-28: JP confirmed Wake Lock showed "active" at a single
+  // point-in-time check, on iOS 26.5 with Low Power Mode off — yet the
+  // screen still went dark overnight. That single live check can't tell
+  // us whether the wake lock survived the whole night or was silently
+  // dropped hours later (a known possibility per WebKit/NoSleep.js
+  // reports). This logs every wake-lock and screen-visibility transition
+  // to localStorage (survives reloads, including the app's own
+  // auto-update reload) with a timestamp, so the Settings sheet can show
+  // a real overnight timeline instead of one instantaneous snapshot.
+  // ---------------------------------------------------------------------
+  const DIAG_KEY = 'nightclock.diag.v1';
+  const DIAG_LABELS = {
+    load: 'Page (re)loaded',
+    visible: 'Screen woke / app visible',
+    hidden: 'Screen went dark / app hidden',
+    'wakelock-acquired': 'Wake Lock acquired',
+    'wakelock-released': 'Wake Lock released',
+    'wakelock-error': 'Wake Lock request failed'
+  };
+
+  function logDiag(event) {
+    try {
+      const raw = localStorage.getItem(DIAG_KEY);
+      let arr = raw ? JSON.parse(raw) : [];
+      arr.push({ t: Date.now(), e: event });
+      if (arr.length > 40) arr = arr.slice(arr.length - 40); // rolling window
+      localStorage.setItem(DIAG_KEY, JSON.stringify(arr));
+    } catch (err) { /* storage unavailable — diagnostics just won't persist */ }
+  }
+
+  function renderDiagLog() {
+    if (!diagLogEl) return;
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem(DIAG_KEY) || '[]'); }
+    catch (err) { arr = []; }
+    if (!arr.length) { diagLogEl.textContent = '(none yet)'; return; }
+    const recent = arr.slice(-12).reverse();
+    diagLogEl.innerHTML = recent.map(function (entry) {
+      const time = new Date(entry.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const label = DIAG_LABELS[entry.e] || entry.e;
+      return time + ' — ' + label;
+    }).join('<br>');
+  }
+
+  // ---------------------------------------------------------------------
+  // Rotation
+  //
+  // BUG FIX (reported on real device): the original design assumed iOS
+  // home-screen web apps permanently FREEZE window.innerWidth/innerHeight
+  // at whatever they were when the app launched, so it always applied a
+  // fixed 90deg rotation to force a landscape look. On JP's phone the OS
+  // actually DOES update those dimensions live when the phone is turned —
+  // so the old code was rotating an already-correctly-updated layout by
+  // another 90 degrees, producing exactly the "portrait looks landscape
+  // and vice versa" symptom (a double rotation).
+  //
+  // Fix: stop assuming either behavior. Instead, check the CURRENT
+  // viewport shape every time this runs and only rotate when the
+  // viewport is actually portrait-shaped (width < height) — i.e. make the
+  // decision dynamic instead of baking in a one-time guess. This is
+  // correct whether or not the device live-updates dimensions:
+  //   - If it DOES (as on JP's phone): each physical turn changes
+  //     innerWidth/innerHeight, updateOrientation() re-evaluates on
+  //     resize/orientationchange/visibilitychange and rotates only when
+  //     needed — no more double rotation.
+  //   - If it DOESN'T (frozen, as originally assumed on some iOS
+  //     versions): the dimensions never change after launch, so this
+  //     still resolves once at launch to the correct single rotation and
+  //     behaves exactly like the old code did.
+  //
+  // currentRotation tracks what's actually applied right now (0, 90, or
+  // -90) so the gesture handler (3.6) can map touch axes correctly for
+  // whichever case is active — including the "no rotation needed"
+  // case, which the old gesture math never accounted for at all.
+  // ---------------------------------------------------------------------
+  let currentRotation = 0;
+
+  function updateOrientation() {
+    const vv = window.visualViewport;
+    const w = vv ? vv.width : window.innerWidth;
+    const h = vv ? vv.height : window.innerHeight;
+    const x = vv ? vv.offsetLeft : 0;
+    const y = vv ? vv.offsetTop : 0;
+    rotator.style.left = (x + w / 2) + 'px';
+    rotator.style.top = (y + h / 2) + 'px';
+    Object.assign(viewportUI.style, {
+      left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px'
+    });
+    const needsRotation = w < h; // viewport is portrait-shaped right now
+    if (needsRotation) {
+      currentRotation = settings.flipDirection === 'cw' ? 90 : -90;
+      rotator.style.width = h + 'px';
+      rotator.style.height = w + 'px';
+      rotator.style.transform = 'translate(-50%,-50%) rotate(' + currentRotation + 'deg)';
+    } else {
+      currentRotation = 0;
+      rotator.style.width = w + 'px';
+      rotator.style.height = h + 'px';
+      rotator.style.transform = 'translate(-50%,-50%) rotate(0deg)';
+    }
+    forceRefit = true;
+  }
+
+  // ---------------------------------------------------------------------
+  // 3.3 Fit engine (digit sizing) — top priority feature
+  // ---------------------------------------------------------------------
+  let lastLen = null;
+  let forceRefit = true;
+
+  function fitDigits(str) {
+    const box = clockWrap.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) {
+      // Layout hasn't settled yet (e.g. called before the box has a size) —
+      // committing to a search now would lock in a tiny 20px result with
+      // nothing left to trigger a retry. Force another attempt shortly.
+      forceRefit = true;
+      requestAnimationFrame(function () { fitDigits(str); });
+      return;
+    }
+    let lo = 20, hi = Math.max(box.width, box.height) * 3, best = lo;
+    for (let i = 0; i < 16; i++) {
+      const mid = (lo + hi) / 2;
+      digitsEl.style.fontSize = mid + 'px';
+      digitsEl.textContent = str; // must set text before measuring
+      const r = digitsEl.getBoundingClientRect();
+      if (r.width <= box.width * 0.98 && r.height <= box.height * 0.98) { best = mid; lo = mid; }
+      else hi = mid;
+    }
+    digitsEl.style.fontSize = best + 'px';
+  }
+
+  function tick() {
+    const str = buildTimeString(new Date(), settings);
+    if (forceRefit || str.length !== lastLen) {
+      fitDigits(str);
+      lastLen = str.length;
+      forceRefit = false;
+    }
+    digitsEl.textContent = str;
+  }
+
+  // ---------------------------------------------------------------------
+  // 3.4 Nightlight state machine
+  // ---------------------------------------------------------------------
+  let nightlight = { state: 'idle', start: 0, durMs: 0, gen: 0 };
+
+  function startNightlight() {
+    let durMs = settings.nightlightMinutes * 60000;
+    if (!isFinite(durMs) || durMs <= 0) durMs = DEFAULT_SETTINGS.nightlightMinutes * 60000;
+    const gen = (nightlight.gen || 0) + 1;
+    nightlight = { state: 'active', start: Date.now(), durMs: durMs, gen: gen };
+    requestAnimationFrame(function () { nightlightFrame(gen); });
+  }
+  function cancelNightlight() {
+    nightlight.state = 'idle';
+    nightlight.gen = (nightlight.gen || 0) + 1; // invalidate any in-flight rAF frames
+    nightlightOverlay.style.opacity = 0;
+    digitsEl.style.opacity = 1;
+    checkForUpdate();
+  }
+  function nightlightFrame(gen) {
+    // A frame scheduled for a nightlight "session" that has since been
+    // cancelled/restarted (e.g. a leftover pre-backgrounding rAF racing the
+    // visibilitychange handler's own re-scheduled frame) is stale — bail out
+    // as a no-op instead of double-writing opacity or double-cancelling.
+    if (nightlight.state !== 'active' || nightlight.gen !== gen) return;
+    const p = Math.min(1, (Date.now() - nightlight.start) / nightlight.durMs);
+    nightlightOverlay.style.opacity = 1 - p;
+    digitsEl.style.opacity = p;
+    if (p >= 1) { cancelNightlight(); return; }
+    requestAnimationFrame(function () { nightlightFrame(gen); });
+  }
+
+  // ---------------------------------------------------------------------
+  // 3.6 Gesture handler — rotation-aware math
+  // ---------------------------------------------------------------------
+  let dimState = null;
+  let lastTap = { t: 0, x: 0, y: 0 };
+
+  function isControlTarget(target) {
+    return !!(target && target.closest &&
+      target.closest('#gear-btn, #nightlight-btn, #settings-sheet'));
+  }
+
+  stage.addEventListener('touchstart', function (e) {
+    if (isControlTarget(e.target)) return; // buttons/sheet handle their own taps
+    if (e.touches.length > 1) return; // multi-touch: a 2nd finger landing near the 1st must not read as a double-tap
+    const t = e.touches[0];
+    const now = Date.now();
+    const isDoubleTap = (now - lastTap.t < 300 && Math.hypot(t.clientX - lastTap.x, t.clientY - lastTap.y) < 30);
+    lastTap = { t: now, x: t.clientX, y: t.clientY };
+
+    if (nightlight.state === 'active') {
+      // Any tap — single or double — dismisses an active nightlight. Bail
+      // out before arming dimState so this same cancelling touch can't also
+      // start a drag-dim gesture (e.g. from finger jitter before lift).
+      cancelNightlight();
+      return;
+    }
+
+    if (isDoubleTap) {
+      manualDim = 0;
+      dimOverlay.style.opacity = 0;
+      gearBtn.style.opacity = 0.35;
+    }
+    // Track both axes — which one matters depends on currentRotation,
+    // and that can change (device turned) between touchstart and touchmove.
+    dimState = { startX: t.clientX, startY: t.clientY, startVal: manualDim };
+  }, { passive: true });
+
+  stage.addEventListener('touchmove', function (e) {
+    if (!dimState) return;
+    const t = e.touches[0];
+    // currentRotation determines which physical axis corresponds to the
+    // app's own "down" direction as the user perceives it:
+    //   90deg (cw)  : local down -> device left  (-X)
+    //   -90deg (ccw): local down -> device right (+X)
+    //   0deg (none) : no rotation applied — local down IS device down (+Y)
+    let dragAmount, localHeight;
+    if (currentRotation === 90) {
+      dragAmount = -(t.clientX - dimState.startX);
+      localHeight = window.innerWidth;
+    } else if (currentRotation === -90) {
+      dragAmount = (t.clientX - dimState.startX);
+      localHeight = window.innerWidth;
+    } else {
+      dragAmount = (t.clientY - dimState.startY);
+      localHeight = window.innerHeight;
+    }
+    const range = localHeight * 0.6;
+    manualDim = Math.min(1, Math.max(0, dimState.startVal + dragAmount / range));
+    dimOverlay.style.opacity = manualDim;
+    gearBtn.style.opacity = String(0.35 * (1 - manualDim));
+  }, { passive: true });
+
+  stage.addEventListener('touchend', function () { dimState = null; }, { passive: true });
+  stage.addEventListener('touchcancel', function () { dimState = null; }, { passive: true });
+
+  // Classic iOS Safari fix: a document-level touchstart listener enables
+  // the :active CSS pseudo-class on tapped elements (buttons). It also
+  // doubles as a nudge to resume the keep-awake video, since any touch
+  // interaction is a safe, reliable point to re-request it if iOS paused
+  // it for any reason.
+  document.addEventListener('touchstart', function () {
+    nudgeKeepAwakeVideo();
+    // Extra resilience: if the wake lock was silently dropped (or never
+    // acquired — see the diagnostic note below), a touch is a safe,
+    // frequent point to retry it without waiting for the next
+    // visibilitychange.
+    if (!wakeLockActive) acquireWakeLock();
+  }, { passive: true });
+
+  // ---------------------------------------------------------------------
+  // 3.7 Wake Lock
+  //
+  // DIAGNOSTIC (added 2026-08-28): JP reported the screen still sleeps
+  // even on a version confirmed to include the keep-awake video fallback.
+  // Research turned up a real WebKit bug (webkit.org/b/254545): the Wake
+  // Lock API silently did NOT work in "Add to Home Screen" standalone web
+  // apps on iOS before 18.4, even though `'wakeLock' in navigator` still
+  // reports true (feature exists, just non-functional in this app mode).
+  // It was fixed in iOS/iPadOS 18.4 (March 2025). The same bug thread also
+  // found the silent-video fallback below is itself unreliable on some
+  // devices. So there are two independent, previously invisible failure
+  // modes here — this status line surfaces which one (if either) is
+  // actually active on JP's phone, instead of guessing blind.
+  // ---------------------------------------------------------------------
+  let wakeLock = null;
+  let wakeLockActive = false;
+
+  function updateWakeLockStatus() {
+    if (!wakeLockStatusEl) return;
+    const supported = ('wakeLock' in navigator);
+    wakeLockStatusEl.textContent = !supported ? 'not supported'
+      : (wakeLockActive ? 'active' : 'supported, not active');
+  }
+
+  let wakeRequestPending = false;
+  let wakeRetryTimer = null;
+
+  function scheduleWakeRetry() {
+    if (document.visibilityState !== 'visible' || wakeRetryTimer !== null) return;
+    wakeRetryTimer = setTimeout(function () {
+      wakeRetryTimer = null;
+      acquireWakeLock();
+    }, 1500);
+  }
+
+  async function acquireWakeLock() {
+    if (document.visibilityState !== 'visible' || wakeRequestPending) return;
+    if (wakeLock && !wakeLock.released) {
+      wakeLockActive = true;
+      updateWakeLockStatus();
+      return;
+    }
+    if (!('wakeLock' in navigator)) {
+      wakeLockActive = false;
+      updateWakeLockStatus();
+      return;
+    }
+    wakeRequestPending = true;
+    try {
+      const sentinel = await navigator.wakeLock.request('screen');
+      wakeLock = sentinel;
+      wakeLockActive = !sentinel.released;
+      updateWakeLockStatus();
+      logDiag('wakelock-acquired');
+      sentinel.addEventListener('release', function () {
+        // A stale sentinel must never erase a newer lock.
+        if (wakeLock !== sentinel) return;
+        wakeLock = null;
+        wakeLockActive = false;
+        updateWakeLockStatus();
+        logDiag('wakelock-released');
+        scheduleWakeRetry();
+      });
+      if (sentinel.released) scheduleWakeRetry();
+    } catch (e) {
+      wakeLockActive = false;
+      updateWakeLockStatus();
+      logDiag('wakelock-error: ' + (e && e.name ? e.name : 'unknown'));
+      // The watchdog retries failures without creating an endless fast loop.
+    } finally {
+      wakeRequestPending = false;
+    }
+  }
+
+  // Recover after OS releases, focus changes and back/forward-cache restores.
+  window.addEventListener('focus', function () { acquireWakeLock(); });
+  window.addEventListener('pageshow', function () { acquireWakeLock(); });
+  setInterval(function () {
+    if (document.visibilityState !== 'visible') return;
+    acquireWakeLock();
+    if (keepAwakeVideo && keepAwakeVideo.paused) nudgeKeepAwakeVideo();
+    updateVideoStatus();
+  }, 15000);
+
+  // ---------------------------------------------------------------------
+  // Keep-awake fallback (silent looping video)
+  //
+  // BUG FIX (reported on real device): the phone was still auto-locking
+  // and sleeping even with the Wake Lock request above. Wake Lock support
+  // and reliability on iOS varies by version and is known to be
+  // inconsistent specifically in "Add to Home Screen" standalone mode —
+  // when it's unsupported or silently ignored there's no signal we can
+  // detect, and nothing else was stopping the OS's normal auto-lock timer.
+  //
+  // Fix: also keep a silent, invisible, looping <video> playing in the
+  // background. iOS treats an actively-playing video (even muted and
+  // invisible) as a reason to suppress the screen's auto-lock timer —
+  // a long-standing technique (used by libraries like NoSleep.js) that
+  // works across far more iOS versions/modes than Wake Lock alone. It's
+  // re-nudged with .play() on load, whenever the app returns to the
+  // foreground, and on every touch, since iOS can pause background video
+  // and needs a nudge to resume it.
+  // ---------------------------------------------------------------------
+  let lastVideoError = '';
+  function updateVideoStatus() {
+    if (!videoStatusEl || !keepAwakeVideo) return;
+    videoStatusEl.textContent = keepAwakeVideo.paused
+      ? ('paused' + (lastVideoError ? ' (' + lastVideoError + ')' : ''))
+      : 'playing';
+  }
+  function nudgeKeepAwakeVideo() {
+    if (!keepAwakeVideo || document.visibilityState !== 'visible') return;
+    let p;
+    try { p = keepAwakeVideo.play(); }
+    catch (e) {
+      const name = e && e.name ? e.name : 'unknown';
+      if (name !== lastVideoError) logDiag('video-error: ' + name);
+      lastVideoError = name;
+      updateVideoStatus();
+      return;
+    }
+    if (p && typeof p.then === 'function') {
+      p.then(function () {
+        if (lastVideoError) logDiag('video-playing');
+        lastVideoError = '';
+        updateVideoStatus();
+      }).catch(function (e) {
+        const name = e && e.name ? e.name : 'unknown';
+        if (name !== lastVideoError) logDiag('video-error: ' + name);
+        lastVideoError = name;
+        updateVideoStatus();
+      });
+    }
+    updateVideoStatus();
+  }
+  if (keepAwakeVideo) {
+    keepAwakeVideo.addEventListener('playing', updateVideoStatus);
+    keepAwakeVideo.addEventListener('pause', function () {
+      updateVideoStatus();
+      // iOS occasionally pauses background video on its own; resume it
+      // immediately if the app is still the visible, active tab.
+      if (document.visibilityState === 'visible') nudgeKeepAwakeVideo();
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // 3.8 Version check / forced reload
+  //
+  // IMPORTANT: whoever edits this file for a new deploy MUST bump BOTH
+  // the APP_VERSION constant below AND the "version" field in
+  // version.json to the same new string (e.g. a new date+counter, like
+  // "2026-08-29.1"). If these two values ever go out of sync on GitHub,
+  // JP's phone will either never notice the update or will reload in a
+  // loop, so keep them identical on every deploy.
+  // ---------------------------------------------------------------------
+  const APP_VERSION = "2026-10-16.3"; // MUST match version.json's "version" field
+
+  async function checkForUpdate() {
+    // Standalone test page: never redirect to the production clock.
+    return;
+    if (settingsOpen || nightlight.state === 'active') return;
+    try {
+      const res = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const version = data.version;
+      if (version && version !== APP_VERSION) {
+        // Circuit breaker: if we already reloaded with this exact target
+        // version (its "v" query param) and APP_VERSION is still stale,
+        // the HTML deploy is lagging/broken — reassigning location.href
+        // again would just reload the same broken page forever. Stop.
+        const alreadyTried = new URL(location.href).searchParams.get('v') === version;
+        if (alreadyTried) return;
+        const url = new URL(location.href);
+        url.searchParams.set('v', version);
+        location.href = url.toString();
+      }
+    } catch (e) { /* offline — retry on next trigger */ }
+  }
+
+  function onSettingsClose() {
+    settingsOpen = false;
+    checkForUpdate();
+  }
+
+  // ---------------------------------------------------------------------
+  // Settings sheet wiring
+  // ---------------------------------------------------------------------
+  function reflectSettingsToUI() {
+    optHour12.checked = !!settings.hour12;
+    optSeconds.checked = !!settings.showSeconds;
+    optLeadZero.checked = !!settings.removeLeadingZero;
+    optColon.checked = !!settings.removeColon;
+    optNightlightMinutes.value = String(settings.nightlightMinutes);
+    optFlip.checked = settings.flipDirection === 'ccw';
+    // Shown at the bottom of the settings sheet so JP can confirm on the
+    // phone itself whether a GitHub deploy actually reached the home-screen
+    // icon (compare against the version number quoted when a fix is made).
+    if (versionValueEl) versionValueEl.textContent = APP_VERSION;
+    updateWakeLockStatus();
+    updateVideoStatus();
+    renderDiagLog();
+  }
+
+  function openSettings() {
+    settingsOpen = true;
+    reflectSettingsToUI();
+    settingsSheet.hidden = false;
+  }
+  function closeSettings() {
+    settingsSheet.hidden = true;
+    onSettingsClose();
+    // A direct user gesture can restore playback blocked during startup.
+    nudgeKeepAwakeVideo();
+    if (!wakeLockActive) acquireWakeLock();
+  }
+
+  gearBtn.addEventListener('click', openSettings);
+  doneBtn.addEventListener('click', closeSettings);
+  // Tap outside the inner panel (on the sheet backdrop itself) closes it.
+  settingsSheet.addEventListener('click', function (e) {
+    if (e.target === settingsSheet) closeSettings();
+  });
+
+  optHour12.addEventListener('change', function () {
+    settings.hour12 = optHour12.checked;
+    saveSettings(); forceRefit = true;
+  });
+  optSeconds.addEventListener('change', function () {
+    settings.showSeconds = optSeconds.checked;
+    saveSettings(); forceRefit = true;
+  });
+  optLeadZero.addEventListener('change', function () {
+    settings.removeLeadingZero = optLeadZero.checked;
+    saveSettings(); forceRefit = true;
+  });
+  optColon.addEventListener('change', function () {
+    settings.removeColon = optColon.checked;
+    saveSettings(); forceRefit = true;
+  });
+  optNightlightMinutes.addEventListener('change', function () {
+    settings.nightlightMinutes = parseInt(optNightlightMinutes.value, 10);
+    saveSettings();
+  });
+  optFlip.addEventListener('change', function () {
+    settings.flipDirection = optFlip.checked ? 'ccw' : 'cw';
+    saveSettings();
+    updateOrientation(); // also sets forceRefit = true
+  });
+
+  // ---------------------------------------------------------------------
+  // Nightlight button
+  // ---------------------------------------------------------------------
+  nightlightBtn.addEventListener('click', function () {
+    if (nightlight.state === 'active') cancelNightlight();
+    else startNightlight();
+  });
+
+  // ---------------------------------------------------------------------
+  // Resize / orientationchange / pageshow — re-check current viewport
+  // shape (updateOrientation) rather than just forcing a re-fit, since
+  // the device may have physically rotated and dimensions may have
+  // genuinely changed (see the Rotation section above for why this
+  // matters — this is the fix for the double-rotation bug).
+  // ---------------------------------------------------------------------
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', updateOrientation);
+    window.visualViewport.addEventListener('scroll', updateOrientation);
+  }
+  window.addEventListener('resize', updateOrientation);
+  window.addEventListener('orientationchange', updateOrientation);
+  window.addEventListener('pageshow', updateOrientation);
+
+  // ---------------------------------------------------------------------
+  // 3.7 / 3.4 visibilitychange — wake lock re-acquire, version check,
+  // orientation re-check (in case the phone was rotated while
+  // backgrounded and the OS only reports the new size on foreground),
+  // and nightlight catch-up if progress passed 1 while backgrounded.
+  // ---------------------------------------------------------------------
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') {
+      logDiag('visible');
+      acquireWakeLock();
+      nudgeKeepAwakeVideo();
+      updateOrientation();
+      checkForUpdate();
+      if (nightlight.state === 'active') {
+        const p = (Date.now() - nightlight.start) / nightlight.durMs;
+        if (p >= 1) cancelNightlight();
+        else requestAnimationFrame((function (gen) { return function () { nightlightFrame(gen); }; })(nightlight.gen));
+      }
+    } else {
+      // The page going hidden is itself the most direct signal available
+      // to JS of "the screen just went dark" (locking, or backgrounding),
+      // so this is the timestamp to compare against when the phone was
+      // actually found locked.
+      logDiag('hidden');
+    }
+  });
+
+  window.addEventListener('load', acquireWakeLock);
+  window.addEventListener('load', nudgeKeepAwakeVideo);
+  window.addEventListener('load', function () { setTimeout(checkForUpdate, 2000); });
+  setInterval(checkForUpdate, 5 * 60 * 1000);
+
+  // ---------------------------------------------------------------------
+  // 3.9 Init
+  // ---------------------------------------------------------------------
+  document.addEventListener('DOMContentLoaded', function () {
+    logDiag('load');
+    loadSettings();
+    updateOrientation();
+    reflectSettingsToUI();
+
+    requestAnimationFrame(function () {
+      updateOrientation(); // dimensions can settle a frame late on some devices
+      tick();
+    });
+    setInterval(tick, 200);
+    acquireWakeLock();
+    nudgeKeepAwakeVideo();
+  });
+})();
+</script>
+</body>
+</html>
